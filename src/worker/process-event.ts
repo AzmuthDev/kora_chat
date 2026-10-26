@@ -23,7 +23,7 @@ export type ProcessOutcome =
   | { status: "recorded" }
   | { status: "ran"; connectionId: string; flowVersionId: string; result: RunResult };
 
-type Connection = { id: string; account_id: string; access_token_enc: string; sandbox: boolean };
+type Connection = { id: string; account_id: string; access_token_enc: string; sandbox: boolean; account_status: string };
 
 export async function processInstagramEvent(
   deps: WorkerDeps,
@@ -42,12 +42,15 @@ export async function processInstagramEvent(
 async function handleEvent(deps: WorkerDeps, eventId: string, event: InstagramEvent, followRechecks?: number): Promise<ProcessOutcome> {
   const conn = (
     await deps.db.query<Connection>(
-      `SELECT id, account_id, access_token_enc, sandbox FROM channel_connections
-        WHERE channel = 'instagram' AND external_account_id = $1 AND status = 'active'`,
+      `SELECT c.id, c.account_id, c.access_token_enc, c.sandbox, a.status AS account_status
+         FROM channel_connections c JOIN accounts a ON a.id = c.account_id
+        WHERE c.channel = 'instagram' AND c.external_account_id = $1 AND c.status = 'active'`,
       [event.igAccountId],
     )
   ).rows[0];
   if (!conn) return { status: "ignored", reason: `conta Instagram ${event.igAccountId} não conectada` };
+  // Empresa suspensa (ex.: pagamento em aberto): nada é enviado até reativar.
+  if (conn.account_status === "suspended") return { status: "ignored", reason: "empresa suspensa" };
 
   const accountId = conn.account_id;
   const connectionId = conn.id;

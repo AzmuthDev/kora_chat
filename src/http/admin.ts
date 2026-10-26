@@ -1,12 +1,15 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { parseJson } from "../db/json.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppDeps } from "./app.js";
 import { commentTriggerConfigSchema, graphSchema, httpUrl } from "../engine/flow-types.js";
 import { buildCommentToDmGraph, createPublishedFlow } from "../store/automations.js";
-import { upsertInstagramConnection } from "../store/connections.js";
+import { InstagramInUseError, upsertInstagramConnection } from "../store/connections.js";
 import { linkStatsByFlow } from "../store/links.js";
+import { accountRoleOf, createAccount } from "../store/team.js";
+import { registerTeamRoutes, requireAccountAdmin } from "./team.js";
+import { registerPlatformRoutes } from "./platform.js";
 import { registerSimulatorRoutes } from "./simulator.js";
 import { registerUserRoutes } from "./users.js";
 import { isSameOrigin, resolvePrincipal } from "./auth.js";
@@ -29,16 +32,16 @@ const commentToDmBody = commentTriggerConfigSchema.extend({
 
 const isUuid = (v: unknown): v is string => typeof v === "string" && z.string().uuid().safeParse(v).success;
 
-/** Para rotas só de administrador. Responde 403 e devolve false quando quem chama é membro. */
-export function requireOwner(req: FastifyRequest, reply: FastifyReply): boolean {
-  if (req.principal?.role === "owner") return true;
-  void reply.code(403).send({ error: "Só administradores podem fazer isso." });
+/** Para rotas só do dono da plataforma. Responde 403 e devolve false para os demais. */
+export function requireSuperadmin(req: FastifyRequest, reply: FastifyReply): boolean {
+  if (req.principal?.role === "superadmin") return true;
+  void reply.code(403).send({ error: "Só o administrador da plataforma pode fazer isso." });
   return false;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.register(async (api) => {
-    // Autenticação (cookie de sessão ou ADMIN_TOKEN), proteção CSRF e acesso por conta.
+    // Autenticação (cookie de sessão ou ADMIN_TOKEN), proteção CSRF e acesso por empresa.
     api.addHook("preHandler", async (req, reply) => {
       const principal = await resolvePrincipal(req, deps);
       if (!principal) return reply.code(401).send({ error: "não autenticado" });
@@ -48,13 +51,20 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       req.principal = principal;
 
       const accountId = (req.params as Record<string, unknown> | undefined)?.accountId;
-      if (principal.kind === "session" && principal.role !== "owner" && isUuid(accountId)) {
-        const { rows } = await deps.db.query("SELECT 1 FROM account_members WHERE account_id = $1 AND user_id = $2", [
-          accountId,
-          principal.user.id,
-        ]);
-        // 404 em vez de 403: não revela que a conta existe.
-        if (rows.length === 0) return reply.code(404).send({ error: "conta não encontrada" });
+      if (!isUuid(accountId) || !req.url.startsWith("/api/accounts/")) return;
+      const account = (await deps.db.query<{ status: string }>("SELECT status FROM accounts WHERE id = $1", [accountId])).rows[0];
+      if (principal.role === "superadmin") {
+        if (!account) return reply.code(404).send({ error: "empresa não encontrada" });
+        req.accountRole = "admin";
+        return;
+      }
+      const role = account && principal.kind === "session" ? await accountRoleOf(deps.db, accountId, principal.user.id) : null;
+      // 404 em vez de 403: não revela que a empresa existe.
+      if (!role) return reply.code(404).send({ error: "empresa não encontrada" });
+      req.accountRole = role;
+      // Empresa suspensa (ex.: pagamento em aberto): dá para consultar, não para mudar nada.
+      if (account!.status === "suspended" && req.method !== "GET") {
+        return reply.code(403).send({ error: "Esta empresa está suspensa. Fale com o suporte do Kora para reativar." });
       }
     });
 
@@ -63,13 +73,16 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       return reply.send(err);
     });
 
+    /** Empresas de quem chama, com o papel dela em cada uma. O super-admin vê todas. */
     api.get("/api/accounts", async (req) => {
       const p = req.principal!;
       const { rows } =
-        p.role === "owner"
-          ? await deps.db.query("SELECT id, name, timezone, created_at FROM accounts ORDER BY created_at")
+        p.role === "superadmin"
+          ? await deps.db.query(
+              `SELECT id, name, timezone, status, plan, created_at, 'admin' AS my_role FROM accounts ORDER BY created_at`,
+            )
           : await deps.db.query(
-              `SELECT a.id, a.name, a.timezone, a.created_at FROM accounts a
+              `SELECT a.id, a.name, a.timezone, a.status, a.plan, a.created_at, m.role AS my_role FROM accounts a
                  JOIN account_members m ON m.account_id = a.id AND m.user_id = $1
                 ORDER BY a.created_at`,
               [p.kind === "session" ? p.user.id : null],
@@ -77,16 +90,27 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       return rows;
     });
 
+    /** Qualquer pessoa logada pode abrir uma empresa (ex.: agência com vários clientes) e vira admin dela. */
     api.post("/api/accounts", async (req, reply) => {
-      if (!requireOwner(req, reply)) return reply;
-      const body = z.object({ name: z.string().min(1), timezone: z.string().default("UTC") }).parse(req.body);
-      const id = randomUUID();
-      await deps.db.query("INSERT INTO accounts (id, name, timezone) VALUES ($1, $2, $3)", [id, body.name, body.timezone]);
-      return reply.code(201).send({ id, name: body.name, timezone: body.timezone });
+      const body = z.object({ name: z.string().trim().min(1).max(120), timezone: z.string().default("UTC") }).parse(req.body);
+      const p = req.principal!;
+      const created = await deps.db.tx((q) =>
+        createAccount(q, { name: body.name, timezone: body.timezone, adminUserId: p.kind === "session" ? p.user.id : undefined }),
+      );
+      return reply.code(201).send({ ...created, my_role: "admin" });
+    });
+
+    api.patch("/api/accounts/:accountId", async (req, reply) => {
+      if (!requireAccountAdmin(req, reply)) return reply;
+      const { accountId } = uuid.parse(req.params);
+      const { name } = z.object({ name: z.string().trim().min(1).max(120) }).parse(req.body);
+      await deps.db.query("UPDATE accounts SET name = $2 WHERE id = $1", [accountId, name]);
+      return { id: accountId, name };
     });
 
     /** Conexão manual: token gerado no painel do app da Meta. */
     api.post("/api/accounts/:accountId/connections/instagram", async (req, reply) => {
+      if (!requireAccountAdmin(req, reply)) return reply;
       const { accountId } = uuid.parse(req.params);
       const body = z
         .object({
@@ -96,20 +120,26 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
           expires_at: z.string().datetime().optional(),
         })
         .parse(req.body);
-      const connection = await upsertInstagramConnection(deps.db, {
-        accountId,
-        igUserId: body.ig_user_id,
-        username: body.username,
-        accessToken: body.access_token,
-        // Validade desconhecida: o worker tenta renovar depois de 24h e descobre a expiração real.
-        expiresAt: body.expires_at ? new Date(body.expires_at) : null,
-        encryptionKey: deps.config.tokenEncryptionKey,
-      });
-      return reply.code(201).send(connection);
+      try {
+        const connection = await upsertInstagramConnection(deps.db, {
+          accountId,
+          igUserId: body.ig_user_id,
+          username: body.username,
+          accessToken: body.access_token,
+          // Validade desconhecida: o worker tenta renovar depois de 24h e descobre a expiração real.
+          expiresAt: body.expires_at ? new Date(body.expires_at) : null,
+          encryptionKey: deps.config.tokenEncryptionKey,
+        });
+        return reply.code(201).send(connection);
+      } catch (err) {
+        if (err instanceof InstagramInUseError) return reply.code(409).send({ error: err.message });
+        throw err;
+      }
     });
 
     /** Gera o link de autorização do Instagram. Abra no navegador; o callback grava a conexão. */
     api.post("/api/accounts/:accountId/connections/instagram/oauth", async (req, reply) => {
+      if (!requireAccountAdmin(req, reply)) return reply;
       const { accountId } = uuid.parse(req.params);
       if (!deps.oauth) {
         return reply.code(503).send({ error: "OAuth não configurado: defina IG_APP_ID, IG_APP_SECRET e PUBLIC_BASE_URL" });
@@ -249,5 +279,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
 
     registerSimulatorRoutes(api, deps);
     registerUserRoutes(api, deps);
+    registerTeamRoutes(api, deps);
+    registerPlatformRoutes(api, deps);
   });
 }

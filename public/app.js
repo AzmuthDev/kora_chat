@@ -9,12 +9,14 @@ const ROUTES = [
   { id: "simulador", label: "Simulador", render: renderSimulator },
   { id: "contatos", label: "Contatos", render: renderContacts },
   { id: "mensagens", label: "Mensagens", render: renderMessages },
-  { id: "equipe", label: "Equipe", render: renderTeam, ownerOnly: true },
+  { id: "equipe", label: "Equipe", render: renderTeam },
+  { id: "plataforma", label: "Plataforma", render: renderPlatform, superadminOnly: true },
 ];
 
 const state = {
   user: null,
   accounts: [],
+  signupEnabled: false,
   accountId: safeGet(localStorage, ACCOUNT_KEY),
   stopPolling: null,
 };
@@ -134,7 +136,11 @@ async function withBusy(button, fn) {
 
 // ---------------------------------------------------------------- login e contas
 
-const isOwner = () => state.user?.role === "owner";
+const isSuperadmin = () => state.user?.role === "superadmin";
+const currentAccount = () => state.accounts.find((a) => a.id === state.accountId);
+/** Admin da empresa selecionada. O super-admin conta como admin em todas. */
+const isAccountAdmin = () => isSuperadmin() || currentAccount()?.my_role === "admin";
+const visibleRoutes = () => ROUTES.filter((r) => !r.superadminOnly || isSuperadmin());
 
 async function logout() {
   stopPolling();
@@ -174,16 +180,29 @@ function gateForm({ title, lede, fields, submitLabel, onSubmit, footer }) {
   return { form, error };
 }
 
-function renderLogin(message, tone = "error") {
+/** `opts.email` trava o e-mail (convite); `opts.afterLogin` roda antes de abrir o painel. */
+function renderLogin(message, tone = "error", opts = {}) {
   const { error } = gateForm({
-    title: "Entrar no painel",
-    lede: "Use o e-mail e a senha que o administrador cadastrou para você.",
+    title: opts.title ?? "Entrar no painel",
+    lede: opts.lede ?? "Use seu e-mail e senha.",
     fields: [
-      h("label", null, "E-mail", h("input", { name: "email", type: "email", autocomplete: "username", required: true })),
+      h(
+        "label",
+        null,
+        "E-mail",
+        h("input", { name: "email", type: "email", autocomplete: "username", required: true, value: opts.email ?? "", readonly: Boolean(opts.email) }),
+      ),
       h("label", null, "Senha", h("input", { name: "password", type: "password", autocomplete: "current-password", required: true })),
     ],
     submitLabel: "Entrar",
-    footer: h("p", { class: "muted small" }, "Esqueceu a senha? Peça a um administrador para redefinir na seção Equipe."),
+    footer: h(
+      "div",
+      { class: "gate-footer" },
+      h("p", { class: "muted small" }, "Esqueceu a senha? Peça para o administrador da sua empresa redefinir."),
+      state.signupEnabled && !opts.email
+        ? h("p", { class: "small" }, "Ainda não usa o Kora? ", h("button", { type: "button", class: "link", onclick: () => renderSignup() }, "Criar conta"))
+        : null,
+    ),
     onSubmit: async (data, showError) => {
       try {
         const res = await api("/auth/login", {
@@ -192,6 +211,7 @@ function renderLogin(message, tone = "error") {
           allow401: true,
         });
         state.user = res.user;
+        if (opts.afterLogin) await opts.afterLogin();
         await boot();
       } catch (err) {
         showError(err.message);
@@ -242,6 +262,160 @@ function renderSetup() {
           allow401: true,
         });
         state.user = res.user;
+        await boot();
+      } catch (err) {
+        showError(err.message);
+      }
+    },
+  });
+}
+
+const passwordFields = () => [
+  h(
+    "label",
+    null,
+    "Senha",
+    h("span", { class: "hint" }, "Pelo menos 8 caracteres."),
+    h("input", { name: "password", type: "password", autocomplete: "new-password", minlength: 8, required: true }),
+  ),
+  h("label", null, "Repita a senha", h("input", { name: "confirm", type: "password", autocomplete: "new-password", required: true })),
+];
+
+function renderSignup() {
+  gateForm({
+    title: "Crie sua conta",
+    lede: "Cadastre sua empresa para automatizar as respostas do Instagram. Depois você convida a sua equipe.",
+    fields: [
+      h("label", null, "Seu nome", h("input", { name: "name", autocomplete: "name", required: true })),
+      h("label", null, "Nome da empresa", h("input", { name: "company_name", autocomplete: "organization", required: true })),
+      h("label", null, "E-mail", h("input", { name: "email", type: "email", autocomplete: "username", required: true })),
+      ...passwordFields(),
+    ],
+    submitLabel: "Criar conta",
+    footer: h("p", { class: "small" }, "Já tem conta? ", h("button", { type: "button", class: "link", onclick: () => renderLogin() }, "Entrar")),
+    onSubmit: async (data, showError) => {
+      if (data.get("password") !== data.get("confirm")) return showError("As senhas não são iguais.");
+      try {
+        const res = await api("/auth/signup", {
+          method: "POST",
+          body: {
+            name: String(data.get("name")),
+            company_name: String(data.get("company_name")),
+            email: String(data.get("email")),
+            password: String(data.get("password")),
+          },
+          allow401: true,
+        });
+        state.user = res.user;
+        selectAccount(res.account.id);
+        location.hash = "#/conexoes";
+        await boot();
+      } catch (err) {
+        showError(err.message);
+      }
+    },
+  });
+}
+
+const ACCOUNT_ROLE_LABEL = { admin: "Administrador", member: "Membro" };
+
+/** Link de convite (#/convite/<token>): mostra para qual empresa é e deixa aceitar. */
+async function renderInvite(token) {
+  const leave = () => {
+    history.replaceState(null, "", location.pathname);
+    boot();
+  };
+  const card = (title, text, ...actions) =>
+    mount(
+      h(
+        "div",
+        { class: "gate" },
+        h(
+          "div",
+          { class: "gate-card" },
+          h("img", { class: "gate-logo", src: "/panel/kora-wordmark.svg", alt: "Kora" }),
+          h("h1", null, title),
+          h("p", { class: "muted" }, text),
+          ...actions,
+        ),
+      ),
+    );
+
+  let invite;
+  try {
+    invite = await api(`/auth/invites/${encodeURIComponent(token)}`, { allow401: true });
+  } catch (err) {
+    return card("Convite indisponível", err.message, h("button", { type: "button", onclick: leave }, "Ir para o painel"));
+  }
+  const what = `Você foi convidado para a empresa ${invite.account_name} como ${ACCOUNT_ROLE_LABEL[invite.role].toLowerCase()}.`;
+  const accept = async (body = {}) => {
+    const res = await api(`/auth/invites/${encodeURIComponent(token)}/accept`, { method: "POST", body, allow401: true });
+    state.user = res.user;
+    selectAccount(res.account_id);
+    history.replaceState(null, "", `${location.pathname}#/automacoes`);
+    toast(`Bem-vindo à ${invite.account_name}`);
+  };
+
+  const me = await api("/auth/me", { allow401: true }).catch(() => null);
+  if (me) {
+    if (me.user.email.toLowerCase() !== invite.email) {
+      return card(
+        "Convite para outro e-mail",
+        `${what} O convite é para ${invite.email}, mas você entrou como ${me.user.email}.`,
+        h(
+          "button",
+          {
+            type: "button",
+            onclick: async () => {
+              await fetch("/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
+              state.user = null;
+              renderInvite(token);
+            },
+          },
+          `Sair e entrar como ${invite.email}`,
+        ),
+      );
+    }
+    return card(
+      "Aceitar convite",
+      what,
+      h(
+        "button",
+        {
+          type: "button",
+          onclick: (e) =>
+            withBusy(e.currentTarget, async () => {
+              await accept();
+              await boot();
+            }),
+        },
+        "Aceitar convite",
+      ),
+    );
+  }
+
+  if (invite.has_user) {
+    return renderLogin(null, "error", {
+      title: "Entre para aceitar o convite",
+      lede: `${what} Você já tem conta no Kora com esse e-mail.`,
+      email: invite.email,
+      afterLogin: () => accept(),
+    });
+  }
+
+  gateForm({
+    title: "Aceitar convite",
+    lede: `${what} Crie sua senha para entrar.`,
+    fields: [
+      h("label", null, "E-mail", h("input", { name: "email", type: "email", value: invite.email, readonly: true })),
+      h("label", null, "Seu nome", h("input", { name: "name", autocomplete: "name", required: true })),
+      ...passwordFields(),
+    ],
+    submitLabel: "Criar conta e entrar",
+    onSubmit: async (data, showError) => {
+      if (data.get("password") !== data.get("confirm")) return showError("As senhas não são iguais.");
+      try {
+        await accept({ name: String(data.get("name")), password: String(data.get("password")) });
         await boot();
       } catch (err) {
         showError(err.message);
@@ -303,23 +477,7 @@ function changePasswordDialog() {
   return dialog;
 }
 
-function renderNoAccess() {
-  mount(
-    h(
-      "div",
-      { class: "gate" },
-      h(
-        "div",
-        { class: "gate-card" },
-        h("img", { class: "gate-logo", src: "/panel/kora-wordmark.svg", alt: "Kora" }),
-        h("h1", null, "Nenhuma conta liberada"),
-        h("p", { class: "muted" }, `Olá, ${state.user.name}. Peça a um administrador para te dar acesso a uma conta na seção Equipe.`),
-        h("button", { type: "button", class: "secondary", onclick: () => logout() }, "Sair"),
-      ),
-    ),
-  );
-}
-
+/** Sem nenhuma empresa (ex.: foi removido da única que tinha): cria a própria ou espera um convite. */
 function renderFirstAccount() {
   const input = h("input", { id: "account-name", required: true, placeholder: "Ex.: Loja da Ana" });
   const form = h(
@@ -336,10 +494,15 @@ function renderFirstAccount() {
       },
     },
     h("img", { class: "gate-logo", src: "/panel/kora-wordmark.svg", alt: "Kora" }),
-    h("h1", null, "Crie sua primeira conta"),
-    h("p", { class: "muted" }, "Uma conta reúne as conexões do Instagram, as automações e os contatos de um cliente ou marca."),
-    h("label", { for: "account-name" }, "Nome da conta", input),
-    h("button", { type: "submit" }, "Criar conta"),
+    h("h1", null, "Crie sua empresa"),
+    h(
+      "p",
+      { class: "muted" },
+      `Olá, ${state.user.name}. A empresa reúne as conexões do Instagram, as automações e os contatos. Se alguém vai te convidar para uma empresa que já existe, é só abrir o link do convite.`,
+    ),
+    h("label", { for: "account-name" }, "Nome da empresa", input),
+    h("button", { type: "submit" }, "Criar empresa"),
+    h("button", { type: "button", class: "quiet", onclick: () => logout() }, "Sair"),
   );
   mount(h("div", { class: "gate" }, form));
   input.focus();
@@ -356,12 +519,17 @@ function mount(node) {
   app.replaceChildren(node);
 }
 
+const inviteToken = () => /^#\/convite\/([\w-]+)$/.exec(location.hash)?.[1];
+
 async function boot() {
+  const invite = inviteToken();
+  if (invite) return renderInvite(invite);
   try {
     if (!state.user) {
       const me = await api("/auth/me", { allow401: true }).catch((err) => (err.status === 401 ? null : Promise.reject(err)));
       if (!me) {
         const status = await api("/auth/status");
+        state.signupEnabled = Boolean(status.signup_enabled);
         return status.needs_setup ? renderSetup() : renderLogin();
       }
       state.user = me.user;
@@ -371,7 +539,7 @@ async function boot() {
     if (err.status !== 401) mount(h("div", { class: "gate" }, h("p", { class: "error" }, `Não foi possível falar com o servidor: ${err.message}`)));
     return;
   }
-  if (state.accounts.length === 0) return isOwner() ? renderFirstAccount() : renderNoAccess();
+  if (state.accounts.length === 0) return renderFirstAccount();
   if (!state.accounts.some((a) => a.id === state.accountId)) selectAccount(state.accounts[0].id);
   renderShell();
   route();
@@ -402,14 +570,14 @@ function renderShell() {
     h(
       "div",
       { class: "account" },
-      h("label", { for: "account-select" }, "Conta"),
+      h("label", { for: "account-select" }, "Empresa"),
       select,
-      isOwner() ? h("button", { class: "quiet", type: "button", onclick: () => dialog.showModal() }, "+ Nova conta") : null,
+      h("button", { class: "quiet", type: "button", onclick: () => dialog.showModal() }, "+ Nova empresa"),
     ),
     h(
       "nav",
       { class: "nav", "aria-label": "Seções" },
-      ROUTES.filter((r) => !r.ownerOnly || isOwner()).map((r) => h("a", { href: `#/${r.id}`, "data-route": r.id }, r.label)),
+      visibleRoutes().map((r) => h("a", { href: `#/${r.id}`, "data-route": r.id }, r.label)),
     ),
     h(
       "div",
@@ -444,18 +612,19 @@ function newAccountDialog() {
             const created = await api("/api/accounts", { method: "POST", body: { name: input.value.trim() } });
             dialog.close();
             selectAccount(created.id);
-            toast(`Conta "${created.name}" criada`);
+            toast(`Empresa "${created.name}" criada`);
             location.hash = "#/conexoes";
             await boot();
           });
         },
       },
-      h("h2", { id: "new-account-title" }, "Nova conta"),
+      h("h2", { id: "new-account-title" }, "Nova empresa"),
+      h("p", { class: "muted small" }, "Você vira administrador dela. Útil para agências que atendem vários clientes."),
       h("label", { for: "new-account" }, "Nome", input),
       h(
         "div",
         { class: "actions" },
-        h("button", { type: "submit", value: "create" }, "Criar conta"),
+        h("button", { type: "submit", value: "create" }, "Criar empresa"),
         h("button", { type: "submit", value: "cancel", class: "secondary", formnovalidate: true }, "Cancelar"),
       ),
     ),
@@ -471,7 +640,7 @@ function stopPolling() {
 async function route() {
   stopPolling();
   const id = location.hash.replace(/^#\//, "") || "automacoes";
-  const current = ROUTES.find((r) => r.id === id && (!r.ownerOnly || isOwner())) ?? ROUTES[1];
+  const current = visibleRoutes().find((r) => r.id === id) ?? ROUTES[1];
   for (const a of document.querySelectorAll(".nav a")) {
     if (a.dataset.route === current.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -481,6 +650,9 @@ async function route() {
   main.replaceChildren(h("p", { class: "muted" }, "Carregando…"));
   try {
     await current.render(main);
+    if (currentAccount()?.status === "suspended" && current.id !== "plataforma") {
+      main.prepend(h("p", { class: "notice suspended" }, "Esta empresa está suspensa: dá para consultar, mas nada é enviado nem pode ser alterado. Fale com o suporte do Kora."));
+    }
   } catch (err) {
     if (err.status !== 401) main.replaceChildren(h("p", { class: "error-text" }, `Erro ao carregar: ${err.message}`));
   }
@@ -589,10 +761,16 @@ async function renderConnections(main) {
         ),
       );
 
+  // Conectar o Instagram de verdade é coisa do administrador da empresa; contas de teste, qualquer um cria.
+  const admin = isAccountAdmin();
   main.replaceChildren(
-    pageHead("Conexões", "Contas do Instagram que esta conta usa para responder comentários e mandar DMs.", connectBtn, sandboxBtn),
+    pageHead(
+      "Conexões",
+      "Contas do Instagram que esta empresa usa para responder comentários e mandar DMs.",
+      ...(admin ? [connectBtn, sandboxBtn] : [sandboxBtn]),
+    ),
     list,
-    manualTokenForm(),
+    admin ? manualTokenForm() : h("p", { class: "muted small" }, "Só administradores da empresa conectam ou trocam a conta do Instagram."),
   );
 }
 
@@ -1326,26 +1504,230 @@ async function renderMessages(main) {
   );
 }
 
-// ---------------------------------------------------------------- equipe (só administradores)
+// ---------------------------------------------------------------- equipe da empresa
 
-const ROLE_LABEL = { owner: "Administrador", member: "Membro" };
+async function renderTeam(main) {
+  const admin = isAccountAdmin();
+  const account = currentAccount();
+  const [members, invites] = await Promise.all([api(acc("/members")), admin ? api(acc("/invites")) : Promise.resolve([])]);
 
-function accountChecklist(selected) {
-  return h(
-    "fieldset",
-    { class: "checklist" },
-    h("legend", null, "Contas que pode acessar"),
-    h("p", { class: "muted small" }, "Administradores veem todas as contas, marcadas ou não."),
-    state.accounts.map((a) =>
-      h("label", { class: "check" }, h("input", { type: "checkbox", name: "account_ids", value: a.id, checked: selected.includes(a.id) }), a.name),
+  async function changeRole(select, m) {
+    const role = select.value;
+    const ok = await withBusy(select, () => api(acc(`/members/${m.user_id}`), { method: "PATCH", body: { role } }));
+    if (!ok) {
+      select.value = m.role;
+      return;
+    }
+    m.role = role;
+    toast(`${m.name} agora é ${ACCOUNT_ROLE_LABEL[role].toLowerCase()}`);
+  }
+
+  async function remove(button, m) {
+    const self = m.user_id === state.user.id;
+    if (!confirm(self ? `Sair da empresa ${account.name}? Você perde o acesso a ela.` : `Remover ${m.name} da empresa ${account.name}?`)) return;
+    await withBusy(button, async () => {
+      await api(acc(`/members/${m.user_id}`), { method: "DELETE" });
+      toast(self ? `Você saiu de ${account.name}` : `${m.name} foi removido da empresa`);
+      if (self) {
+        selectAccount(null);
+        await boot();
+      } else route();
+    });
+  }
+
+  const membersTable = h(
+    "div",
+    { class: "block table-wrap" },
+    h(
+      "table",
+      null,
+      h("thead", null, h("tr", null, ["Pessoa", "Papel", "Último acesso", ""].map((t) => h("th", { scope: "col" }, t)))),
+      h(
+        "tbody",
+        null,
+        members.length ? null : h("tr", null, h("td", { colspan: 4, class: "muted" }, "Ninguém nesta empresa ainda. Convide a primeira pessoa abaixo.")),
+        members.map((m) => {
+          const self = m.user_id === state.user.id;
+          return h(
+            "tr",
+            null,
+            h(
+              "td",
+              null,
+              h("strong", null, m.name),
+              self ? [" ", h("span", { class: "chip" }, "você")] : null,
+              h("div", { class: "muted" }, m.email),
+              m.disabled ? h("span", { class: "pill bad" }, "Desativado") : null,
+            ),
+            h(
+              "td",
+              null,
+              admin
+                ? h(
+                    "select",
+                    { "aria-label": `Papel de ${m.name}`, onchange: (e) => changeRole(e.currentTarget, m) },
+                    Object.entries(ACCOUNT_ROLE_LABEL).map(([v, l]) => h("option", { value: v, selected: m.role === v }, l)),
+                  )
+                : ACCOUNT_ROLE_LABEL[m.role],
+            ),
+            h("td", null, m.last_login_at ? ago(m.last_login_at) : h("span", { class: "muted" }, "Nunca entrou")),
+            h(
+              "td",
+              { class: "row-actions" },
+              admin || self
+                ? h("button", { type: "button", class: "quiet", onclick: (e) => remove(e.currentTarget, m) }, self ? "Sair da empresa" : "Remover")
+                : null,
+            ),
+          );
+        }),
+      ),
     ),
+  );
+
+  main.replaceChildren(
+    pageHead(
+      "Equipe",
+      admin
+        ? `Quem trabalha na empresa ${account.name}. Administradores convidam pessoas e conectam o Instagram; membros operam automações, contatos e mensagens.`
+        : `Quem trabalha na empresa ${account.name}. Só administradores convidam pessoas.`,
+    ),
+    membersTable,
+    ...(admin ? invitesSection(invites).filter(Boolean) : []),
   );
 }
 
-async function renderTeam(main) {
-  const users = await api("/api/users");
-  const accountName = new Map(state.accounts.map((a) => [a.id, a.name]));
+function invitesSection(invites) {
+  async function revoke(button, i) {
+    await withBusy(button, async () => {
+      await api(acc(`/invites/${i.id}`), { method: "DELETE" });
+      toast(`Convite para ${i.email} cancelado`);
+      route();
+    });
+  }
+
+  const pending = invites.length
+    ? h(
+        "div",
+        { class: "block table-wrap" },
+        h(
+          "table",
+          null,
+          h("thead", null, h("tr", null, ["Convite pendente", "Papel", "Vale até", ""].map((t) => h("th", { scope: "col" }, t)))),
+          h(
+            "tbody",
+            null,
+            invites.map((i) =>
+              h(
+                "tr",
+                null,
+                h("td", null, h("strong", null, i.email), i.invited_by ? h("div", { class: "muted" }, `por ${i.invited_by}`) : null),
+                h("td", null, ACCOUNT_ROLE_LABEL[i.role]),
+                h("td", null, dateTime(i.expires_at)),
+                h("td", { class: "row-actions" }, h("button", { type: "button", class: "quiet", onclick: (e) => revoke(e.currentTarget, i) }, "Cancelar")),
+              ),
+            ),
+          ),
+        ),
+      )
+    : null;
+
+  const result = h("div", { class: "invite-result", hidden: true });
+  const errors = h("p", { class: "form-errors", role: "alert" });
+  const form = h(
+    "form",
+    {
+      class: "form-body",
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errors.textContent = "";
+        const d = new FormData(form);
+        const body = { email: String(d.get("email")).trim(), role: String(d.get("role")) };
+        await withBusy(e.submitter, async () => {
+          let created;
+          try {
+            created = await api(acc("/invites"), { method: "POST", body });
+          } catch (err) {
+            errors.textContent = err.message;
+            return;
+          }
+          form.reset();
+          showInviteLink(result, created);
+        });
+      },
+    },
+    h(
+      "fieldset",
+      null,
+      h(
+        "div",
+        { class: "grid-2" },
+        h("label", null, "E-mail da pessoa", h("input", { name: "email", type: "email", required: true, autocomplete: "off" })),
+        h(
+          "label",
+          null,
+          "Papel",
+          h("span", { class: "hint" }, "Administradores também convidam e conectam o Instagram."),
+          h("select", { name: "role" }, h("option", { value: "member" }, "Membro"), h("option", { value: "admin" }, "Administrador")),
+        ),
+      ),
+    ),
+    errors,
+    h("div", null, h("button", { type: "submit" }, "Gerar link de convite")),
+    result,
+  );
+  return [pending, h("details", { class: "form", open: !invites.length }, h("summary", null, "Convidar pessoa"), form)];
+}
+
+/** O Kora ainda não manda e-mail: o admin copia o link e envia (WhatsApp, e-mail…). */
+function showInviteLink(container, invite) {
+  const input = h("input", { readonly: true, value: invite.url, "aria-label": "Link do convite", onfocus: (e) => e.currentTarget.select() });
+  container.replaceChildren(
+    h("p", null, h("strong", null, `Convite criado para ${invite.email}.`), " Mande este link para a pessoa. Ele vale por 7 dias e só funciona com esse e-mail."),
+    h(
+      "div",
+      { class: "copy-row" },
+      input,
+      h(
+        "button",
+        {
+          type: "button",
+          class: "secondary",
+          onclick: async () => {
+            try {
+              await navigator.clipboard.writeText(invite.url);
+              toast("Link copiado");
+            } catch {
+              input.select();
+              toast("Selecione o link e copie com Ctrl+C", "error");
+            }
+          },
+        },
+        "Copiar link",
+      ),
+    ),
+  );
+  container.hidden = false;
+  input.select();
+}
+
+// ---------------------------------------------------------------- plataforma (só o super-admin)
+
+const PLATFORM_ROLE_LABEL = { superadmin: "Super-admin", user: "Cliente" };
+
+async function renderPlatform(main) {
+  const [accounts, users] = await Promise.all([api("/api/platform/accounts"), api("/api/users")]);
   const editDialog = h("dialog", { "aria-label": "Editar pessoa" });
+
+  async function setStatus(button, a, status) {
+    if (status === "suspended" && !confirm(`Suspender ${a.name}? A empresa fica só leitura e o Kora para de responder no Instagram dela.`)) return;
+    await withBusy(button, async () => {
+      await api(`/api/platform/accounts/${a.id}`, { method: "PATCH", body: { status } });
+      const mine = state.accounts.find((x) => x.id === a.id);
+      if (mine) mine.status = status;
+      toast(status === "suspended" ? `${a.name} suspensa` : `${a.name} reativada`);
+      route();
+    });
+  }
 
   function openEdit(u) {
     const errors = h("p", { class: "form-errors", role: "alert" });
@@ -1359,11 +1741,7 @@ async function renderTeam(main) {
           e.preventDefault();
           errors.textContent = "";
           const d = new FormData(form);
-          const body = {
-            name: String(d.get("name")).trim(),
-            role: isSelf ? undefined : String(d.get("role")),
-            account_ids: d.getAll("account_ids").map(String),
-          };
+          const body = { name: String(d.get("name")).trim(), role: isSelf ? undefined : String(d.get("role")) };
           const newPassword = String(d.get("password") ?? "");
           if (newPassword) body.password = newPassword;
           await withBusy(e.submitter, async () => {
@@ -1386,14 +1764,14 @@ async function renderTeam(main) {
         : h(
             "label",
             null,
-            "Papel",
+            "Papel na plataforma",
+            h("span", { class: "hint" }, "Super-admin vê e administra todas as empresas."),
             h(
               "select",
               { name: "role" },
-              Object.entries(ROLE_LABEL).map(([v, l]) => h("option", { value: v, selected: u.role === v }, l)),
+              Object.entries(PLATFORM_ROLE_LABEL).map(([v, l]) => h("option", { value: v, selected: u.role === v }, l)),
             ),
           ),
-      accountChecklist(u.account_ids ?? []),
       h(
         "label",
         null,
@@ -1422,13 +1800,49 @@ async function renderTeam(main) {
     });
   }
 
-  const list = h(
+  const companies = h(
     "div",
     { class: "block table-wrap" },
     h(
       "table",
       null,
-      h("thead", null, h("tr", null, ["Pessoa", "Papel", "Contas", "Último acesso", "Situação", ""].map((t) => h("th", { scope: "col" }, t)))),
+      h(
+        "thead",
+        null,
+        h("tr", null, ["Empresa", "Administradores", "Pessoas", "Instagram", "Situação", ""].map((t) => h("th", { scope: "col" }, t))),
+      ),
+      h(
+        "tbody",
+        null,
+        accounts.map((a) =>
+          h(
+            "tr",
+            null,
+            h("td", null, h("strong", null, a.name), h("div", { class: "muted" }, `criada ${ago(a.created_at)} · plano ${a.plan}`)),
+            h("td", null, a.admins.length ? a.admins.map((e) => h("div", null, e)) : h("span", { class: "muted" }, "Nenhum")),
+            h("td", null, String(a.members)),
+            h("td", null, a.connections ? `${a.connections} conectada${a.connections > 1 ? "s" : ""}` : h("span", { class: "muted" }, "Nenhuma")),
+            h("td", null, h("span", { class: `pill ${a.status === "active" ? "ok" : "bad"}` }, a.status === "active" ? "Ativa" : "Suspensa")),
+            h(
+              "td",
+              { class: "row-actions" },
+              a.status === "active"
+                ? h("button", { type: "button", class: "quiet", onclick: (e) => setStatus(e.currentTarget, a, "suspended") }, "Suspender")
+                : h("button", { type: "button", class: "secondary", onclick: (e) => setStatus(e.currentTarget, a, "active") }, "Reativar"),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  const people = h(
+    "div",
+    { class: "block table-wrap" },
+    h(
+      "table",
+      null,
+      h("thead", null, h("tr", null, ["Pessoa", "Papel", "Empresas", "Último acesso", "Situação", ""].map((t) => h("th", { scope: "col" }, t)))),
       h(
         "tbody",
         null,
@@ -1437,15 +1851,13 @@ async function renderTeam(main) {
             "tr",
             null,
             h("td", null, h("strong", null, u.name), h("div", { class: "muted" }, u.email)),
-            h("td", null, ROLE_LABEL[u.role] ?? u.role),
+            h("td", null, PLATFORM_ROLE_LABEL[u.role] ?? u.role),
             h(
               "td",
               null,
-              u.role === "owner"
-                ? h("span", { class: "muted" }, "Todas")
-                : (u.account_ids ?? []).length
-                  ? u.account_ids.map((id) => h("span", { class: "chip" }, accountName.get(id) ?? "?"))
-                  : h("span", { class: "muted" }, "Nenhuma"),
+              u.accounts.length
+                ? u.accounts.map((a) => h("span", { class: "chip" }, a.role === "admin" ? `${a.name} (admin)` : a.name))
+                : h("span", { class: "muted" }, "Nenhuma"),
             ),
             h("td", null, u.last_login_at ? ago(u.last_login_at) : h("span", { class: "muted" }, "Nunca entrou")),
             h("td", null, h("span", { class: `pill ${u.disabled ? "bad" : "ok"}` }, u.disabled ? "Desativado" : "Ativo")),
@@ -1467,67 +1879,12 @@ async function renderTeam(main) {
     ),
   );
 
-  const errors = h("p", { class: "form-errors", role: "alert" });
-  const form = h(
-    "form",
-    {
-      class: "form-body",
-      onsubmit: async (e) => {
-        e.preventDefault();
-        errors.textContent = "";
-        const d = new FormData(form);
-        const body = {
-          name: String(d.get("name")).trim(),
-          email: String(d.get("email")).trim(),
-          password: String(d.get("password")),
-          role: String(d.get("role")),
-          account_ids: d.getAll("account_ids").map(String),
-        };
-        await withBusy(e.submitter, async () => {
-          try {
-            await api("/api/users", { method: "POST", body });
-          } catch (err) {
-            errors.textContent = err.message;
-            return;
-          }
-          toast(`${body.name} foi adicionado. Passe o e-mail e a senha para a pessoa entrar.`);
-          route();
-        });
-      },
-    },
-    h(
-      "fieldset",
-      null,
-      h(
-        "div",
-        { class: "grid-2" },
-        h("label", null, "Nome", h("input", { name: "name", required: true, autocomplete: "off" })),
-        h("label", null, "E-mail", h("input", { name: "email", type: "email", required: true, autocomplete: "off" })),
-        h(
-          "label",
-          null,
-          "Senha inicial",
-          h("span", { class: "hint" }, "Pelo menos 8 caracteres. A pessoa pode trocar depois."),
-          h("input", { name: "password", type: "password", minlength: 8, required: true, autocomplete: "new-password" }),
-        ),
-        h(
-          "label",
-          null,
-          "Papel",
-          h("span", { class: "hint" }, "Membros só veem as contas marcadas abaixo."),
-          h("select", { name: "role" }, h("option", { value: "member" }, "Membro"), h("option", { value: "owner" }, "Administrador")),
-        ),
-      ),
-      accountChecklist([]),
-    ),
-    errors,
-    h("div", null, h("button", { type: "submit" }, "Adicionar pessoa")),
-  );
-
   main.replaceChildren(
-    pageHead("Equipe", "Quem pode entrar no painel e quais contas cada pessoa pode ver e operar."),
-    list,
-    h("details", { class: "form", open: users.length <= 1 }, h("summary", null, "Adicionar pessoa"), form),
+    pageHead("Plataforma", "Todas as empresas-clientes e pessoas do Kora. Só você, como super-admin, vê esta página."),
+    h("h2", { class: "section-title" }, `Empresas (${accounts.length})`),
+    companies,
+    h("h2", { class: "section-title" }, `Pessoas (${users.length})`),
+    people,
     editDialog,
   );
 }
@@ -1535,6 +1892,7 @@ async function renderTeam(main) {
 // ---------------------------------------------------------------- início
 
 window.addEventListener("hashchange", () => {
-  if (document.getElementById("main")) route();
+  if (inviteToken()) boot();
+  else if (document.getElementById("main")) route();
 });
 boot();

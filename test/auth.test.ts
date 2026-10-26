@@ -42,14 +42,14 @@ async function login(emailAddr: string, password: string) {
 
 describe("primeiro acesso", () => {
   it("exige o ADMIN_TOKEN, cria o administrador uma única vez e já deixa logado", async () => {
-    expect((await req({ url: "/auth/status" })).json()).toEqual({ needs_setup: true });
+    expect((await req({ url: "/auth/status" })).json()).toMatchObject({ needs_setup: true });
 
     const wrong = await req({ method: "POST", url: "/auth/setup", payload: { admin_token: "errado", ...OWNER } });
     expect(wrong.statusCode).toBe(403);
 
     const res = await req({ method: "POST", url: "/auth/setup", payload: { admin_token: ADMIN, ...OWNER } });
     expect(res.statusCode).toBe(201);
-    expect(res.json().user).toMatchObject({ email: "ana@loja.com", name: "Ana Admin", role: "owner" });
+    expect(res.json().user).toMatchObject({ email: "ana@loja.com", name: "Ana Admin", role: "superadmin" });
     const cookie = String(res.headers["set-cookie"]);
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
@@ -57,7 +57,7 @@ describe("primeiro acesso", () => {
 
     const again = await req({ method: "POST", url: "/auth/setup", payload: { admin_token: ADMIN, ...OWNER, email: "b@b.com" } });
     expect(again.statusCode).toBe(409);
-    expect((await req({ url: "/auth/status" })).json()).toEqual({ needs_setup: false });
+    expect((await req({ url: "/auth/status" })).json()).toMatchObject({ needs_setup: false });
 
     const me = await req({ url: "/auth/me", cookie: sessionCookieOf(res) });
     expect(me.json().user.email).toBe("ana@loja.com");
@@ -86,7 +86,7 @@ describe("login e sessão", () => {
   it("entra com e-mail (sem diferenciar maiúsculas) e senha; erro genérico quando falha", async () => {
     const ok = await login("ANA@loja.com", OWNER.password);
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().user.role).toBe("owner");
+    expect(ok.json().user.role).toBe("superadmin");
 
     const badPass = await login(OWNER.email, "senha-errada");
     const noUser = await login("ninguem@loja.com", "qualquer-coisa");
@@ -145,93 +145,6 @@ describe("login e sessão", () => {
     expect((await req({ url: "/auth/me", cookie: phone })).statusCode).toBe(401);
     expect((await login(OWNER.email, OWNER.password)).statusCode).toBe(401);
     expect((await login(OWNER.email, "nova-senha-123")).statusCode).toBe(200);
-  });
-});
-
-describe("equipe e permissões por conta", () => {
-  let owner: string;
-  let accountB: string;
-
-  beforeEach(async () => {
-    owner = await createOwner();
-    accountB = (await req({ method: "POST", url: "/api/accounts", cookie: owner, payload: { name: "Conta B" } })).json().id;
-  });
-
-  async function addMember(extra: Record<string, unknown> = {}) {
-    const res = await req({
-      method: "POST", url: "/api/users", cookie: owner,
-      payload: { name: "Bruno", email: "bruno@loja.com", password: "senha-do-bruno", account_ids: [env.accountId], ...extra },
-    });
-    expect(res.statusCode, res.body).toBe(201);
-    return res.json() as { id: string; account_ids: string[] };
-  }
-
-  it("membro vê e opera só as contas liberadas", async () => {
-    const created = await addMember();
-    expect(created.account_ids).toEqual([env.accountId]);
-    const member = sessionCookieOf(await login("bruno@loja.com", "senha-do-bruno"));
-
-    const accounts = (await req({ url: "/api/accounts", cookie: member })).json();
-    expect(accounts.map((a: { id: string }) => a.id)).toEqual([env.accountId]);
-
-    expect((await req({ url: `/api/accounts/${env.accountId}/contacts`, cookie: member })).statusCode).toBe(200);
-    expect((await req({ url: `/api/accounts/${accountB}/contacts`, cookie: member })).statusCode).toBe(404);
-    expect((await req({ method: "POST", url: `/api/accounts/${accountB}/connections/sandbox`, cookie: member, payload: {} })).statusCode).toBe(404);
-
-    // Só administradores criam contas e gerenciam a equipe.
-    expect((await req({ method: "POST", url: "/api/accounts", cookie: member, payload: { name: "x" } })).statusCode).toBe(403);
-    expect((await req({ url: "/api/users", cookie: member })).statusCode).toBe(403);
-    expect((await req({ method: "POST", url: "/api/users", cookie: member, payload: {} })).statusCode).toBe(403);
-  });
-
-  it("administrador vê todas as contas; o ADMIN_TOKEN continua valendo para scripts", async () => {
-    const accounts = (await req({ url: "/api/accounts", cookie: owner })).json();
-    expect(accounts).toHaveLength(2);
-    const viaToken = await req({ url: "/api/users", headers: { authorization: `Bearer ${ADMIN}` } });
-    expect(viaToken.statusCode).toBe(200);
-  });
-
-  it("e-mail repetido (sem diferenciar maiúsculas) é recusado", async () => {
-    await addMember();
-    const dup = await req({
-      method: "POST", url: "/api/users", cookie: owner,
-      payload: { name: "Outro", email: "BRUNO@loja.com", password: "12345678" },
-    });
-    expect(dup.statusCode).toBe(409);
-  });
-
-  it("editar acesso, redefinir senha e desativar", async () => {
-    const m = await addMember();
-    const session = sessionCookieOf(await login("bruno@loja.com", "senha-do-bruno"));
-
-    const edited = await req({ method: "PATCH", url: `/api/users/${m.id}`, cookie: owner, payload: { account_ids: [accountB] } });
-    expect(edited.json().account_ids).toEqual([accountB]);
-    expect((await req({ url: `/api/accounts/${env.accountId}/contacts`, cookie: session })).statusCode).toBe(404);
-    expect((await req({ url: `/api/accounts/${accountB}/contacts`, cookie: session })).statusCode).toBe(200);
-
-    await req({ method: "PATCH", url: `/api/users/${m.id}`, cookie: owner, payload: { password: "senha-nova-bruno" } });
-    expect((await req({ url: "/auth/me", cookie: session })).statusCode).toBe(401);
-    const again = sessionCookieOf(await login("bruno@loja.com", "senha-nova-bruno"));
-
-    await req({ method: "PATCH", url: `/api/users/${m.id}`, cookie: owner, payload: { disabled: true } });
-    expect((await req({ url: "/auth/me", cookie: again })).statusCode).toBe(401);
-    expect((await login("bruno@loja.com", "senha-nova-bruno")).statusCode).toBe(401);
-
-    await req({ method: "PATCH", url: `/api/users/${m.id}`, cookie: owner, payload: { disabled: false } });
-    expect((await login("bruno@loja.com", "senha-nova-bruno")).statusCode).toBe(200);
-  });
-
-  it("não deixa ficar sem administrador nem se desativar", async () => {
-    const meId = (await req({ url: "/auth/me", cookie: owner })).json().user.id;
-    expect((await req({ method: "PATCH", url: `/api/users/${meId}`, cookie: owner, payload: { disabled: true } })).statusCode).toBe(400);
-    expect((await req({ method: "PATCH", url: `/api/users/${meId}`, cookie: owner, payload: { role: "member" } })).statusCode).toBe(400);
-
-    // Via ADMIN_TOKEN (sem "eu"), ainda assim não pode desativar o último administrador.
-    const viaToken = await req({
-      method: "PATCH", url: `/api/users/${meId}`, payload: { disabled: true }, headers: { authorization: `Bearer ${ADMIN}` },
-    });
-    expect(viaToken.statusCode).toBe(400);
-    expect(viaToken.json().error).toContain("pelo menos um administrador");
   });
 });
 

@@ -3,7 +3,7 @@ import { page } from "./html.js";
 import type { AppDeps } from "./app.js";
 import { IgApiError } from "../instagram/client.js";
 import { REQUIRED_SCOPES, WEBHOOK_FIELDS } from "../instagram/oauth.js";
-import { upsertInstagramConnection } from "../store/connections.js";
+import { InstagramInUseError, upsertInstagramConnection } from "../store/connections.js";
 
 /**
  * Callback público do OAuth. A autenticação é o `state`: aleatório, de uso único, expira em 15 min
@@ -72,6 +72,7 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
         { href: "/#/conexoes", label: "Voltar ao painel" },
       );
     } catch (err) {
+      if (err instanceof InstagramInUseError) return page(reply, 409, "Conta já conectada", err.message, { href: "/#/conexoes", label: "Voltar ao painel" });
       req.log.error({ err }, "falha no OAuth do Instagram");
       const detail = err instanceof IgApiError ? err.message : "erro inesperado";
       return page(reply, 502, "Não foi possível conectar", `O Instagram recusou a conexão: ${detail}`);

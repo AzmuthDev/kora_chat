@@ -41,9 +41,10 @@ type Trigger = { config: CommentTriggerConfig; createdAt: number };
 
 export async function sweepComments(deps: WorkerDeps, opts: SweepOptions = {}): Promise<SweepSummary[]> {
   const conns = await deps.db.query<{ id: string; account_id: string; external_account_id: string; access_token_enc: string }>(
-    `SELECT id, account_id, external_account_id, access_token_enc FROM channel_connections
-      WHERE channel = 'instagram' AND status = 'active' AND NOT sandbox
-      ORDER BY created_at`,
+    `SELECT c.id, c.account_id, c.external_account_id, c.access_token_enc
+       FROM channel_connections c JOIN accounts a ON a.id = c.account_id AND a.status = 'active'
+      WHERE c.channel = 'instagram' AND c.status = 'active' AND NOT c.sandbox
+      ORDER BY c.created_at`,
   );
   const summaries: SweepSummary[] = [];
   for (const conn of conns.rows) {

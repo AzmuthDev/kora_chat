@@ -11,6 +11,14 @@ export type ConnectionSummary = {
   scopes: string[];
 };
 
+/** A conta do Instagram já está ligada a outra empresa: conectar de novo aqui a tiraria de lá sem aviso. */
+export class InstagramInUseError extends Error {
+  constructor() {
+    super("Essa conta do Instagram já está conectada em outra empresa no Kora. Desconecte lá primeiro ou fale com o suporte.");
+    this.name = "InstagramInUseError";
+  }
+}
+
 /** Cria ou atualiza a conexão do Instagram (manual ou via OAuth). Reativa conexões expiradas. */
 export async function upsertInstagramConnection(
   q: Queryable,
@@ -26,14 +34,18 @@ export async function upsertInstagramConnection(
     encryptionKey: string;
   },
 ): Promise<ConnectionSummary> {
+  const owner = await q.query<{ account_id: string }>(
+    "SELECT account_id FROM channel_connections WHERE channel = 'instagram' AND external_account_id = $1",
+    [c.igUserId],
+  );
+  if (owner.rows[0] && owner.rows[0].account_id !== c.accountId) throw new InstagramInUseError();
   await q.query(
     `INSERT INTO channel_connections
        (id, account_id, channel, external_account_id, username, access_token_enc, token_expires_at, token_issued_at, scopes,
         app_scoped_user_id)
      VALUES ($1, $2, 'instagram', $3, $4, $5, $6, NOW(3), $7, $8) AS new
      ON DUPLICATE KEY UPDATE
-            account_id = new.account_id,
-            username = COALESCE(new.username, channel_connections.username),
+            username =COALESCE(new.username, channel_connections.username),
             app_scoped_user_id = COALESCE(new.app_scoped_user_id, channel_connections.app_scoped_user_id),
             access_token_enc = new.access_token_enc,
             token_expires_at = new.token_expires_at,

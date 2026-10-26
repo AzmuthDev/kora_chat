@@ -32,6 +32,8 @@ const schema = z.object({
   TRUST_PROXY: z.enum(["true", "false"]).default("false"),
   /** inline = worker roda no mesmo processo do servidor HTTP. */
   WORKER_MODE: z.enum(["inline", "off"]).default("inline"),
+  /** Cadastro aberto: qualquer pessoa cria login e empresa pelo painel. false = só por convite. */
+  SIGNUP_ENABLED: z.enum(["true", "false"]).default("true"),
   /** De quantos em quantos minutos o worker procura comentários que o webhook não entregou. 0 desliga. */
   COMMENT_SWEEP_MINUTES: z.coerce.number().int().min(0).max(1440).default(5),
 });
@@ -60,6 +62,7 @@ export type Config = {
   trustProxy: boolean;
   workerMode: "inline" | "off";
   commentSweepMinutes: number;
+  signupEnabled: boolean;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -97,5 +100,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trustProxy: e.TRUST_PROXY === "true",
     workerMode: e.WORKER_MODE,
     commentSweepMinutes: e.COMMENT_SWEEP_MINUTES,
+    signupEnabled: e.SIGNUP_ENABLED === "true",
   };
 }

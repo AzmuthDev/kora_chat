@@ -73,28 +73,33 @@ node scripts/setup-mysql.mjs
 - Collation binária (`utf8mb4_bin`): comparações diferenciam maiúsculas, como no PostgreSQL. E-mails são gravados em minúsculas.
 - Comandos de estrutura não entram em transação: se uma migração falhar no meio, corrija e rode de novo num banco limpo.
 
-## Login da equipe
+## Empresas, login e equipe (multiempresa)
 
-O painel usa **e-mail e senha**, com sessão em cookie `HttpOnly` que dura 14 dias e se renova com o uso.
+O Kora atende várias **empresas-clientes**. Cada empresa tem as próprias conexões do Instagram, automações, contatos e equipe, e uma empresa nunca vê os dados de outra. O login é por **e-mail e senha**, com sessão em cookie `HttpOnly` que dura 14 dias e se renova com o uso.
 
-1. **Primeiro acesso:** em `http://localhost:3000/` aparece "Crie o administrador". Informe o `ADMIN_TOKEN` do `.env` (é a prova de que você tem acesso ao servidor), seu nome, e-mail e senha. Isso só funciona uma vez.
-2. **Equipe:** o administrador adiciona as pessoas (nome, e-mail, senha inicial), escolhe o papel e marca quais contas cada uma pode ver.
+| Papel | Onde vale | Pode |
+|---|---|---|
+| Super-admin | Plataforma inteira | Ver e entrar em todas as empresas, suspender e reativar empresas, gerenciar as pessoas da plataforma (seção **Plataforma**). |
+| Administrador | Uma empresa | Tudo do membro, mais convidar e remover pessoas, mudar papéis e conectar o Instagram. |
+| Membro | Uma empresa | Criar e pausar automações, usar o simulador, ver contatos e mensagens. |
 
-| Papel | Pode |
-|---|---|
-| Administrador | Ver todas as contas, criar contas e gerenciar a equipe. |
-| Membro | Ver e operar só as contas marcadas para ele. |
+1. **Primeiro acesso (você, dono da plataforma):** em `/` aparece "Crie o administrador". Informe o `ADMIN_TOKEN` do `.env` (a prova de que você tem acesso ao servidor), seu nome, e-mail e senha. Essa pessoa é o **super-admin**. Isso só funciona uma vez.
+2. **Cadastro de cliente:** na tela de login, "Criar conta" cria o login e a empresa, com a pessoa como administradora. Para fechar o cadastro e aceitar gente só por convite, defina `SIGNUP_ENABLED=false`.
+3. **Convites:** em **Equipe**, o administrador informa o e-mail e o papel e recebe um link (`/#/convite/<token>`). O Kora ainda não envia e-mail: copie o link e mande para a pessoa. O link vale por 7 dias, é de uso único e só funciona com o e-mail convidado. Quem já tem conta entra com ela para aceitar; quem não tem cria a senha na hora.
+4. **Várias empresas:** qualquer pessoa logada pode abrir outra empresa em "+ Nova empresa" (útil para agências) e troca de empresa pelo seletor.
 
-- Cada pessoa troca a própria senha em "Alterar senha". Ao trocar, os outros aparelhos dela são desconectados.
-- Esqueceu a senha? Um administrador define uma nova em Equipe → Editar.
-- Desativar alguém corta o acesso na hora.
-- O sistema não deixa ficar sem nenhum administrador ativo.
+Regras que o sistema garante:
+- Toda empresa mantém pelo menos um administrador ativo, e a plataforma mantém pelo menos um super-admin.
+- Uma conta do Instagram só pode estar conectada em **uma** empresa. Conectar a mesma conta em outra é recusado, em vez de tirá-la de quem já usava.
+- **Empresa suspensa** (por exemplo, pagamento em aberto): o painel continua abrindo, mas nada pode ser alterado e o worker ignora os comentários e DMs dela até reativar.
+- Cada pessoa troca a própria senha em "Alterar senha", e os outros aparelhos dela são desconectados. Esqueceu a senha? O super-admin redefine em **Plataforma**, ou no servidor com `npm run reset-password -- email@exemplo.com`.
 
 **Segurança:**
 - Senhas guardadas com scrypt.
-- Login bloqueado por 15 minutos após 10 tentativas erradas.
+- Login bloqueado por 15 minutos após 10 tentativas erradas; cadastros em sequência do mesmo IP também são limitados.
 - Proteção contra CSRF (cookie `SameSite=Lax` e verificação de origem).
-- O `ADMIN_TOKEN` continua valendo como `Authorization: Bearer` para scripts e integrações.
+- Os tokens de convite ficam só como hash no banco.
+- O `ADMIN_TOKEN` vale como `Authorization: Bearer` de **super-admin** para scripts e integrações. Guarde-o como uma senha de root.
 
 ### Deixar acessível para a equipe
 
@@ -266,7 +271,8 @@ Para isso, contatos e mensagens agora guardam de qual conexão vieram (`connecti
 - Gatilhos de DM por palavra-chave, menção e resposta em story, resposta padrão.
 - Smart Delay, coleta de input (`contact_sessions` já está no schema), condições, External Request, passo de IA.
 - Editor visual de fluxos livres (por exemplo React Flow); hoje o painel cria só o modelo comentário → DM.
-- Recuperação de senha por e-mail (hoje um administrador redefine na seção Equipe, ou `npm run reset-password -- email@exemplo.com` no servidor).
+- Envio de e-mail (convites, recuperação de senha, aviso de conexão expirada): hoje o admin copia o link do convite, e o super-admin redefine senhas em Plataforma ou com `npm run reset-password`.
+- Cobrança e limites por plano (`accounts.plan` já existe; a suspensão de empresa já está pronta para ser usada pela cobrança).
 - Registro de auditoria: quem criou ou alterou cada automação.
 - Lock por contato e rate limit por conta para volumes altos.
 - Busca do perfil (nome) do usuário: hoje `{{first_name}}` cai para o `username`.

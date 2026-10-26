@@ -13,17 +13,22 @@ import {
   SESSION_COOKIE,
   SESSION_TTL_MS,
   sessionCookie,
+  type PlatformRole,
   type SessionUser,
 } from "../auth/sessions.js";
+import { createAccount, type AccountRole } from "../store/team.js";
+import { registerInviteRoutes } from "./team.js";
 
-/** Quem está fazendo a chamada: um usuário logado (cookie) ou um script com o ADMIN_TOKEN. */
+/** Quem está fazendo a chamada: um usuário logado (cookie) ou um script com o ADMIN_TOKEN (vale como super-admin). */
 export type Principal =
-  | { kind: "session"; role: "owner" | "member"; user: SessionUser; token: string }
-  | { kind: "admin_token"; role: "owner" };
+  | { kind: "session"; role: PlatformRole; user: SessionUser; token: string }
+  | { kind: "admin_token"; role: "superadmin" };
 
 declare module "fastify" {
   interface FastifyRequest {
     principal?: Principal;
+    /** Papel de quem chama na empresa da rota (`:accountId`). O super-admin conta como admin em todas. */
+    accountRole?: AccountRole;
   }
 }
 
@@ -42,7 +47,7 @@ export function tokenMatches(given: string | undefined, expected: string): boole
 export async function resolvePrincipal(req: FastifyRequest, deps: AppDeps): Promise<Principal | null> {
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) {
-    return tokenMatches(auth.slice(7).trim(), deps.config.adminToken) ? { kind: "admin_token", role: "owner" } : null;
+    return tokenMatches(auth.slice(7).trim(), deps.config.adminToken) ? { kind: "admin_token", role: "superadmin" } : null;
   }
   const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
   const user = await readSession(deps.db, token);
@@ -66,7 +71,7 @@ export function isSameOrigin(req: FastifyRequest): boolean {
 
 const isSecure = (req: FastifyRequest) => req.protocol === "https";
 
-function setSessionCookie(reply: FastifyReply, req: FastifyRequest, token: string) {
+export function setSessionCookie(reply: FastifyReply, req: FastifyRequest, token: string) {
   reply.header("Set-Cookie", sessionCookie(token, { secure: isSecure(req), maxAgeMs: SESSION_TTL_MS }));
 }
 
@@ -78,6 +83,8 @@ const GENERIC_LOGIN_ERROR = "E-mail ou senha incorretos.";
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
   const limiter = new LoginRateLimiter();
+  // Cadastros contam como "tentativas" por IP: segura quem tenta criar contas em massa.
+  const signupLimiter = new LoginRateLimiter();
 
   app.register(async (auth) => {
     auth.setErrorHandler((err, _req, reply) => {
@@ -91,13 +98,56 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       if (req.method !== "GET" && !isSameOrigin(req)) return reply.code(403).send({ error: "origem não permitida" });
     });
 
-    /** O painel pergunta se precisa criar o primeiro administrador. */
+    /** O painel pergunta se precisa criar o super-admin e se o cadastro está aberto. */
     auth.get("/auth/status", async () => {
       const { rows } = await deps.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM users");
-      return { needs_setup: rows[0]!.n === 0 };
+      return { needs_setup: Number(rows[0]!.n) === 0, signup_enabled: deps.config.signupEnabled };
     });
 
-    /** Cria o primeiro administrador. Exige o ADMIN_TOKEN para provar acesso ao servidor. */
+    /** Cadastro de cliente: cria o login e a empresa, com a pessoa como administradora. */
+    auth.post("/auth/signup", async (req, reply) => {
+      if (!deps.config.signupEnabled) return reply.code(403).send({ error: "O cadastro está fechado. Peça um convite a quem já usa o Kora." });
+      const keys = [`ip:${req.ip}`];
+      const wait = signupLimiter.retryAfter(keys);
+      if (wait > 0) {
+        return reply.code(429).header("Retry-After", String(wait)).send({ error: `Muitos cadastros seguidos. Tente de novo em ${Math.ceil(wait / 60)} min.` });
+      }
+      const body = z
+        .object({
+          name: z.string().trim().min(1).max(100),
+          email,
+          password,
+          company_name: z.string().trim().min(1, "informe o nome da empresa").max(120),
+        })
+        .parse(req.body);
+      signupLimiter.fail(keys);
+
+      const hash = await hashPassword(body.password);
+      let created: { user: SessionUser; account: Awaited<ReturnType<typeof createAccount>> };
+      try {
+        created = await deps.db.tx(async (q) => {
+          const user: SessionUser = { id: randomUUID(), email: body.email, name: body.name, role: "user" };
+          await q.query(
+            "INSERT INTO users (id, email, name, password_hash, role, last_login_at) VALUES ($1, $2, $3, $4, 'user', NOW(3))",
+            [user.id, user.email, user.name, hash],
+          );
+          const account = await createAccount(q, { name: body.company_name, adminUserId: user.id });
+          return { user, account };
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code === "ER_DUP_ENTRY") {
+          return reply.code(409).send({ error: "Já existe uma conta com esse e-mail. Entre com ela ou use outro e-mail." });
+        }
+        throw err;
+      }
+      const session = await createSession(deps.db, created.user.id, { userAgent: req.headers["user-agent"], ip: req.ip });
+      setSessionCookie(reply, req, session.token);
+      return reply.code(201).send(created);
+    });
+
+    registerInviteRoutes(auth, deps);
+
+    /** Cria o super-admin (dono da plataforma). Exige o ADMIN_TOKEN para provar acesso ao servidor. */
     auth.post("/auth/setup", async (req, reply) => {
       const body = z
         .object({ admin_token: z.string(), name: z.string().trim().min(1).max(100), email, password })
@@ -109,11 +159,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       const id = randomUUID();
       const inserted = await deps.db.query(
         `INSERT INTO users (id, email, name, password_hash, role, last_login_at)
-         SELECT $1, $2, $3, $4, 'owner', NOW(3) FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM users)`,
+         SELECT $1, $2, $3, $4, 'superadmin', NOW(3) FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM users)`,
         [id, body.email, body.name, hash],
       );
       if (inserted.affectedRows === 0) return reply.code(409).send({ error: "O administrador já foi criado. Entre com e-mail e senha." });
-      const user: SessionUser = { id, email: body.email, name: body.name, role: "owner" };
+      const user: SessionUser = { id, email: body.email, name: body.name, role: "superadmin" };
       const session = await createSession(deps.db, user.id, { userAgent: req.headers["user-agent"], ip: req.ip });
       setSessionCookie(reply, req, session.token);
       return reply.code(201).send({ user });

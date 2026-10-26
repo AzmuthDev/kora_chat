@@ -136,6 +136,22 @@ button.quiet:hover {
   background: var(--line-soft);
 }
 
+/* Botão com cara de link (ex.: "Criar conta" no login). */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--cobalt);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.link:hover {
+  background: none;
+  color: var(--cobalt-ink);
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: progress;
@@ -263,6 +279,55 @@ textarea:focus {
   display: grid;
   gap: 1rem;
   justify-items: start;
+}
+
+.gate-footer {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.gate-footer p {
+  margin: 0;
+}
+
+/* ---------- equipe e plataforma ---------- */
+
+.section-title {
+  font-size: var(--step-1);
+  margin: 1.75rem 0 0.75rem;
+}
+
+.invite-result {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: var(--radius-m);
+  background: var(--ok-soft);
+}
+
+.invite-result p {
+  margin: 0;
+}
+
+.copy-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.copy-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: var(--step--1);
+}
+
+.notice.suspended {
+  margin: 0 0 1.25rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--radius-m);
+  background: var(--amber-soft);
+  color: var(--amber-ink);
 }
 
 /* ---------- estrutura ---------- */

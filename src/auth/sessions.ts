@@ -4,7 +4,9 @@ import type { Queryable } from "../db/index.js";
 export const SESSION_COOKIE = "sid";
 export const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-export type SessionUser = { id: string; email: string; name: string; role: "owner" | "member" };
+/** superadmin = dono da plataforma; user = cliente (o acesso a cada empresa vem de account_members). */
+export type PlatformRole = "superadmin" | "user";
+export type SessionUser = { id: string; email: string; name: string; role: PlatformRole };
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
