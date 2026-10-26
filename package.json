@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env dist/main.js",
     "build": "tsc -p tsconfig.build.json",
     "migrate": "tsx --env-file-if-exists=.env src/db/migrate-cli.ts",
+    "reset-password": "tsx --env-file-if-exists=.env src/auth/reset-password-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:setup": "node scripts/setup-mysql.mjs"
