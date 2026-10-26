@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Kora">
+  <!-- K: haste + braços em "<" (a seta de responder). O ponto âmbar é a mensagem. -->
+  <g fill="none" stroke="#1B2430" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M34 20V100"/>
+    <path d="M86 20 46 60 86 100"/>
+  </g>
+  <circle cx="79" cy="60" r="10.5" fill="#E9A21B"/>
+</svg>

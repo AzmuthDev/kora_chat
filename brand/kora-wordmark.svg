@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 8 358 144" role="img" aria-label="Kora">
+  <!-- Traço único (16), pontas redondas. Linha de base 136, altura-x 64, ascendente 24. -->
+  <g fill="none" stroke="#1B2430" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 24V136"/>
+    <path d="M74 64 32 100 74 136"/>
+    <circle cx="140" cy="100" r="36"/>
+    <path d="M208 136V64M208 100Q208 64 246 64"/>
+    <circle cx="314" cy="100" r="36"/>
+    <path d="M350 64V136"/>
+  </g>
+  <circle cx="64" cy="100" r="8" fill="#E9A21B"/>
+</svg>
