@@ -16,6 +16,22 @@ export const sandboxInstagramApi: InstagramApi = {
   async listRecentMedia() {
     return [];
   },
+  // O seletor de posts mostra exemplos com os IDs que o simulador usa.
+  async listMedia() {
+    const sample = (id: string, caption: string, productType: string) => ({
+      id,
+      caption,
+      mediaType: "IMAGE",
+      productType,
+      thumbnailUrl: null,
+      permalink: null,
+      timestamp: null,
+    });
+    return {
+      items: [sample("post-de-teste", "Post de teste do simulador", "FEED"), sample("reel-de-teste", "Reel de teste do simulador", "REELS")],
+      next: null,
+    };
+  },
   async listComments() {
     return [];
   },

@@ -77,6 +77,31 @@ describe("cliente da Graph API do Instagram", () => {
     expect((captured[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer T");
   });
 
+  it("lista posts com miniatura e cursor da próxima página", async () => {
+    const captured: Captured[] = [];
+    const body = {
+      data: [
+        { id: "m1", caption: "Promo", media_type: "VIDEO", media_product_type: "REELS", media_url: "https://v.mp4", thumbnail_url: "https://t.jpg", permalink: "https://ig/reel/1", timestamp: "2026-10-26T10:00:00+0000" },
+        { id: "m2", media_type: "IMAGE", media_url: "https://i.jpg" },
+      ],
+      paging: { cursors: { after: "CUR" }, next: "https://g.test/next" },
+    };
+    const api = createInstagramApi({ baseUrl: "https://g.test", version: "v24.0", fetchImpl: fakeFetch(200, body, captured) });
+    const page = await api.listMedia({ accessToken: "T", igAccountId: "178", limit: 24, after: "X" });
+    expect(page).toEqual({
+      items: [
+        { id: "m1", caption: "Promo", mediaType: "VIDEO", productType: "REELS", thumbnailUrl: "https://t.jpg", permalink: "https://ig/reel/1", timestamp: "2026-10-26T10:00:00.000Z" },
+        // Foto: a própria imagem serve de miniatura.
+        { id: "m2", caption: null, mediaType: "IMAGE", productType: null, thumbnailUrl: "https://i.jpg", permalink: null, timestamp: null },
+      ],
+      next: "CUR",
+    });
+    const url = new URL(captured[0]!.url);
+    expect(url.pathname).toBe("/v24.0/178/media");
+    expect(url.searchParams.get("after")).toBe("X");
+    expect(url.searchParams.get("limit")).toBe("24");
+  });
+
   it("lista comentários com autor e quem já respondeu", async () => {
     const captured: Captured[] = [];
     const body = {

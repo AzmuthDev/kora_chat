@@ -14,8 +14,10 @@ const oauth = config.igOAuth
   ? createInstagramOAuth({ ...config.igOAuth, graphBaseUrl: config.igGraphBaseUrl, graphVersion: config.igGraphVersion })
   : undefined;
 
+const ig = createInstagramApi({ baseUrl: config.igGraphBaseUrl, version: config.igGraphVersion });
+
 const app = buildApp(
-  { config, db, oauth },
+  { config, db, oauth, ig },
   {
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
@@ -28,7 +30,6 @@ if (applied.length) app.log.info({ applied }, "migrações aplicadas");
 app.log.info(`usando MySQL em ${new URL(config.databaseUrl).host}`);
 app.log.info(oauth ? `OAuth do Instagram ativo (redirect: ${config.igOAuth!.redirectUri})` : "OAuth do Instagram desativado");
 
-const ig = createInstagramApi({ baseUrl: config.igGraphBaseUrl, version: config.igGraphVersion });
 const worker =
   config.workerMode === "inline"
     ? startWorker({ db, ig, tokenEncryptionKey: config.tokenEncryptionKey, publicBaseUrl: config.publicBaseUrl }, app.log, {

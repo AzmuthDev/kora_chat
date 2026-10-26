@@ -24,6 +24,19 @@ export type IgComment = {
   replyFromIds: string[];
 };
 
+/** Post da conta, para o seletor do painel. */
+export type IgMedia = {
+  id: string;
+  caption: string | null;
+  mediaType: string;
+  /** FEED | REELS | STORY… */
+  productType: string | null;
+  /** Vídeo/reel: a capa; foto/carrossel: a própria imagem. */
+  thumbnailUrl: string | null;
+  permalink: string | null;
+  timestamp: string | null;
+};
+
 export interface InstagramApi {
   sendMessage(args: {
     accessToken: string;
@@ -33,6 +46,8 @@ export interface InstagramApi {
   }): Promise<{ messageId?: string }>;
   replyToComment(args: { accessToken: string; commentId: string; text: string }): Promise<{ id?: string }>;
   listRecentMedia(args: { accessToken: string; igAccountId: string; limit: number }): Promise<{ id: string }[]>;
+  /** Página de posts com miniatura; `next` é o cursor da próxima página (null = acabou). */
+  listMedia(args: { accessToken: string; igAccountId: string; limit: number; after?: string }): Promise<{ items: IgMedia[]; next: string | null }>;
   listComments(args: { accessToken: string; mediaId: string; limit: number }): Promise<IgComment[]>;
   /** Se o contato segue a conta. null = a Meta não informou (antes de um toque em botão ela não informa). */
   getFollowStatus(args: { accessToken: string; igsid: string }): Promise<boolean | null>;
@@ -120,6 +135,36 @@ export function createInstagramApi(opts: { baseUrl: string; version: string; fet
     async listRecentMedia({ accessToken, igAccountId, limit }) {
       const json = await request(`${igAccountId}/media?${new URLSearchParams({ fields: "id", limit: String(limit) })}`, accessToken);
       return rows(json).flatMap((r) => (idOf(r) ? [{ id: idOf(r)! }] : []));
+    },
+    async listMedia({ accessToken, igAccountId, limit, after }) {
+      const params = new URLSearchParams({
+        fields: "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp",
+        limit: String(limit),
+        ...(after ? { after } : {}),
+      });
+      const json = await request(`${igAccountId}/media?${params}`, accessToken);
+      const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+      const items = rows(json).flatMap((r): IgMedia[] => {
+        const id = idOf(r);
+        if (!id) return [];
+        const mediaType = text(r.media_type) ?? "IMAGE";
+        const time = Date.parse(String(r.timestamp));
+        return [
+          {
+            id,
+            caption: text(r.caption),
+            mediaType,
+            productType: text(r.media_product_type),
+            thumbnailUrl: text(r.thumbnail_url) ?? (mediaType === "VIDEO" ? null : text(r.media_url)),
+            permalink: text(r.permalink),
+            timestamp: Number.isNaN(time) ? null : new Date(time).toISOString(),
+          },
+        ];
+      });
+      const paging = (json.paging ?? {}) as Row;
+      // Sem `next`, a Meta ainda pode mandar o cursor: só há próxima página quando `next` existe.
+      const next = paging.next ? text((paging.cursors as Row | undefined)?.after) : null;
+      return { items, next };
     },
     async listComments({ accessToken, mediaId, limit }) {
       const params = new URLSearchParams({ fields: "id,text,timestamp,from,replies{from}", limit: String(limit) });

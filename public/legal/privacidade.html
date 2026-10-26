@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Política de Privacidade · Kora</title>
+    <meta name="description" content="Como o Kora trata os dados das empresas clientes e das pessoas que interagem com elas no Instagram." />
+    <link rel="icon" href="/panel/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="/panel/styles.css" />
+  </head>
+  <body class="legal-page">
+    <header class="legal-head">
+      <a href="/" aria-label="Kora, ir para o painel"><img src="/panel/kora-wordmark.svg" alt="Kora" /></a>
+      <nav aria-label="Documentos"><a href="/termos">Termos de Uso</a> <a href="/privacidade" aria-current="page">Política de Privacidade</a></nav>
+    </header>
+
+    <main class="legal">
+      <!-- RASCUNHO: os trechos em <mark class="ph"> precisam ser preenchidos e o texto todo revisado por um advogado antes de publicar. -->
+      <p class="legal-draft">Rascunho em revisão jurídica. Os trechos destacados ainda serão preenchidos.</p>
+
+      <h1>Política de Privacidade</h1>
+      <p class="legal-meta">Última atualização: <mark class="ph">[DATA DE VIGÊNCIA]</mark></p>
+
+      <p>
+        Esta política explica como o <strong>Kora</strong>, serviço de automação de respostas no Instagram oferecido por
+        <mark class="ph">[RAZÃO SOCIAL]</mark>, inscrita no CNPJ <mark class="ph">[CNPJ]</mark>, com sede em
+        <mark class="ph">[ENDEREÇO COMPLETO]</mark> ("nós"), trata dados pessoais, em conformidade com a Lei Geral de Proteção de
+        Dados (Lei nº 13.709/2018, "LGPD") e com os Termos da Plataforma da Meta.
+      </p>
+
+      <h2 id="papeis">1. Quem é responsável por cada dado</h2>
+      <p>O Kora atende <strong>empresas</strong> ("clientes") que conectam contas profissionais do Instagram. Por isso, temos dois papéis diferentes:</p>
+      <ul>
+        <li>
+          <strong>Somos controladores</strong> dos dados de cadastro de quem usa o painel do Kora (nome, e-mail, senha e registros de acesso) e dos
+          dados da empresa cliente.
+        </li>
+        <li>
+          <strong>Somos operadores</strong> dos dados das pessoas que comentam ou mandam mensagens para as contas do Instagram dos nossos clientes
+          ("seguidores"). Nesses casos, quem decide a finalidade é o cliente, que é o controlador e responde perante essas pessoas. Tratamos esses
+          dados apenas para executar as automações que o cliente configurou.
+        </li>
+      </ul>
+
+      <h2 id="dados">2. Quais dados tratamos</h2>
+      <h3>2.1 De quem usa o painel</h3>
+      <ul>
+        <li>Nome, e-mail e senha (guardada somente em forma cifrada, com o algoritmo scrypt; nunca temos acesso à senha em si).</li>
+        <li>Empresas a que a pessoa pertence e o papel dela em cada uma (administrador ou membro).</li>
+        <li>Registros de sessão: data do último acesso, endereço IP e navegador usados para entrar.</li>
+        <li>Convites enviados: e-mail convidado e papel. O link do convite é guardado apenas em forma cifrada.</li>
+      </ul>
+
+      <h3>2.2 Da conta do Instagram conectada pelo cliente</h3>
+      <ul>
+        <li>Identificador e nome de usuário da conta profissional.</li>
+        <li>Token de acesso concedido pelo cliente no login do Instagram, guardado com criptografia AES-256-GCM.</li>
+        <li>Permissões concedidas: <code>instagram_business_basic</code>, <code>instagram_business_manage_comments</code> e <code>instagram_business_manage_messages</code>.</li>
+      </ul>
+
+      <h3>2.3 Dos seguidores que interagem com o cliente</h3>
+      <ul>
+        <li>Identificador escopado do Instagram (IGSID) e nome de usuário.</li>
+        <li>Texto dos comentários feitos nos posts do cliente e o post em que foram feitos.</li>
+        <li>Mensagens diretas trocadas com a conta do cliente, inclusive toques em botões de resposta rápida.</li>
+        <li>Respostas enviadas pelo Kora em nome do cliente e o resultado de cada envio.</li>
+        <li>Etiquetas (tags) e campos que o cliente associa a cada contato.</li>
+        <li>
+          Se a automação pede para seguir a conta: a informação, fornecida pela Meta, de se a pessoa segue ou não a conta do cliente.
+        </li>
+        <li>
+          Cliques nos links enviados por mensagem: data, navegador e um código que identifica a pessoa sem revelar quem ela é. O endereço IP é
+          guardado apenas em forma cifrada (HMAC), nunca em texto.
+        </li>
+      </ul>
+      <p>Não coletamos senhas do Instagram, não lemos conversas que não envolvam a conta conectada e não acessamos dados de pessoas que não interagiram com o cliente.</p>
+
+      <h2 id="finalidades">3. Para que usamos e com qual base legal</h2>
+      <table>
+        <thead>
+          <tr><th scope="col">Finalidade</th><th scope="col">Base legal (LGPD, art. 7º)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Criar e manter a conta de quem usa o painel, permitir o login e a gestão da equipe</td><td>Execução de contrato (inciso V)</td></tr>
+          <tr>
+            <td>Receber comentários e mensagens e responder automaticamente conforme as regras definidas pelo cliente</td>
+            <td>Execução de contrato com o cliente (inciso V); como operadores, seguimos as instruções do cliente, que define a base legal perante os seguidores</td>
+          </tr>
+          <tr><td>Mostrar ao cliente estatísticas de envio e de cliques</td><td>Execução de contrato (inciso V)</td></tr>
+          <tr><td>Segurança: limitar tentativas de login, evitar abuso e investigar incidentes</td><td>Legítimo interesse (inciso IX)</td></tr>
+          <tr><td>Cumprir obrigações legais e ordens de autoridades</td><td>Cumprimento de obrigação legal (inciso II)</td></tr>
+        </tbody>
+      </table>
+      <p>
+        <strong>Não vendemos dados</strong>, não usamos dados do Instagram para publicidade, para treinar modelos de inteligência artificial nem para
+        criar perfis fora do serviço contratado, e não os compartilhamos com corretores de dados. Os dados obtidos pela plataforma da Meta são usados
+        somente para prestar o serviço ao cliente que os autorizou.
+      </p>
+
+      <h2 id="compartilhamento">4. Com quem compartilhamos</h2>
+      <ul>
+        <li><strong>Meta Platforms</strong> (Instagram): para enviar as respostas e mensagens, por meio da API oficial.</li>
+        <li>
+          <strong>Provedores de infraestrutura</strong> que processam dados em nosso nome e sob contrato: banco de dados
+          (<mark class="ph">[PROVEDOR E REGIÃO DO BANCO DE DADOS, ex.: Aiven, região X]</mark>) e servidor de aplicação
+          (<mark class="ph">[PROVEDOR E PAÍS DO SERVIDOR]</mark>).
+        </li>
+        <li><strong>Google Fonts</strong>: o painel carrega fontes do Google, que recebe o endereço IP de quem abre o painel.</li>
+        <li><strong>Autoridades</strong>: quando houver obrigação legal ou ordem judicial.</li>
+      </ul>
+      <p>
+        Quando algum provedor estiver fora do Brasil, a transferência internacional segue o art. 33 da LGPD
+        (<mark class="ph">[MECANISMO: cláusulas-padrão contratuais / outro]</mark>).
+      </p>
+
+      <h2 id="retencao">5. Por quanto tempo guardamos</h2>
+      <ul>
+        <li>Dados da conta do painel: enquanto a conta existir e, depois, pelo prazo exigido por lei.</li>
+        <li>
+          Comentários, mensagens, contatos e cliques: enquanto o cliente usar o serviço ou até ele pedir a exclusão, por no máximo
+          <mark class="ph">[PRAZO, ex.: 12 meses]</mark> sem uso.
+        </li>
+        <li>Registros de acesso (IP e data): <mark class="ph">[PRAZO, ex.: 6 meses]</mark>, conforme o Marco Civil da Internet.</li>
+        <li>O token do Instagram é apagado assim que a conta é desconectada ou o cliente remove o Kora nas configurações do Instagram.</li>
+      </ul>
+
+      <h2 id="exclusao">6. Como pedir a exclusão dos dados</h2>
+      <p>Há três caminhos:</p>
+      <ol>
+        <li>
+          <strong>Pelo Instagram:</strong> em <em>Configurações → Apps e sites</em>, remova o Kora. A Meta nos avisa e desconectamos a conta na hora.
+          Se você pedir a exclusão por ali, apagamos as mensagens, os contatos e os eventos ligados àquela conta e mostramos um código para acompanhar
+          o pedido.
+        </li>
+        <li><strong>Pelo cliente:</strong> se você interagiu com uma empresa que usa o Kora, peça a ela, que é a controladora dos seus dados.</li>
+        <li><strong>Conosco:</strong> escreva para <mark class="ph">[E-MAIL DO ENCARREGADO]</mark>. Respondemos em até 15 dias.</li>
+      </ol>
+
+      <h2 id="direitos">7. Seus direitos</h2>
+      <p>
+        Pela LGPD (art. 18), você pode pedir: confirmação de que tratamos seus dados, acesso, correção, anonimização ou eliminação de dados
+        desnecessários, portabilidade, informação sobre com quem compartilhamos, revisão de decisões automatizadas e revogação do consentimento,
+        quando ele for a base do tratamento. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD).
+      </p>
+
+      <h2 id="seguranca">8. Segurança</h2>
+      <ul>
+        <li>Conexões sempre por HTTPS; banco de dados com conexão cifrada (TLS).</li>
+        <li>Senhas com scrypt; tokens do Instagram com AES-256-GCM; links de convite e IPs apenas como hash.</li>
+        <li>Cada empresa só acessa os próprios dados; o acesso dentro da empresa depende do papel de cada pessoa.</li>
+        <li>Bloqueio após tentativas de login repetidas e proteção contra requisições de outros sites (CSRF).</li>
+      </ul>
+      <p>Se ocorrer um incidente que possa trazer risco a você, avisaremos os afetados e a ANPD, nos termos do art. 48 da LGPD.</p>
+
+      <h2 id="cookies">9. Cookies</h2>
+      <p>
+        O painel usa um único cookie, essencial, para manter a sessão de login (<code>HttpOnly</code>, válido por até 14 dias). Não usamos cookies de
+        publicidade nem de rastreamento de terceiros.
+      </p>
+
+      <h2 id="criancas">10. Menores de idade</h2>
+      <p>O painel do Kora é destinado a empresas e a maiores de 18 anos. Não coletamos intencionalmente dados de crianças pelo painel.</p>
+
+      <h2 id="mudancas">11. Mudanças nesta política</h2>
+      <p>Podemos atualizar esta política. Mudanças relevantes serão avisadas no painel ou por e-mail antes de entrarem em vigor.</p>
+
+      <h2 id="contato">12. Encarregado (DPO) e contato</h2>
+      <p>
+        Encarregado pelo tratamento de dados: <mark class="ph">[NOME DO ENCARREGADO]</mark>,
+        <mark class="ph">[E-MAIL DO ENCARREGADO]</mark>.<br />
+        <mark class="ph">[RAZÃO SOCIAL]</mark>, CNPJ <mark class="ph">[CNPJ]</mark>, <mark class="ph">[ENDEREÇO COMPLETO]</mark>.
+      </p>
+    </main>
+
+    <footer class="legal-foot"><a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a> · <a href="/">Entrar no Kora</a></footer>
+  </body>
+</html>

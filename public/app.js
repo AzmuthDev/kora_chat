@@ -180,6 +180,17 @@ function gateForm({ title, lede, fields, submitLabel, onSubmit, footer }) {
   return { form, error };
 }
 
+const legalLinks = (lead) =>
+  h(
+    "p",
+    { class: "legal-links" },
+    lead ?? null,
+    h("a", { href: "/termos", target: "_blank", rel: "noopener" }, "Termos de Uso"),
+    lead ? " e a " : " · ",
+    h("a", { href: "/privacidade", target: "_blank", rel: "noopener" }, "Política de Privacidade"),
+    lead ? "." : null,
+  );
+
 /** `opts.email` trava o e-mail (convite); `opts.afterLogin` roda antes de abrir o painel. */
 function renderLogin(message, tone = "error", opts = {}) {
   const { error } = gateForm({
@@ -202,6 +213,7 @@ function renderLogin(message, tone = "error", opts = {}) {
       state.signupEnabled && !opts.email
         ? h("p", { class: "small" }, "Ainda não usa o Kora? ", h("button", { type: "button", class: "link", onclick: () => renderSignup() }, "Criar conta"))
         : null,
+      legalLinks(),
     ),
     onSubmit: async (data, showError) => {
       try {
@@ -292,7 +304,12 @@ function renderSignup() {
       ...passwordFields(),
     ],
     submitLabel: "Criar conta",
-    footer: h("p", { class: "small" }, "Já tem conta? ", h("button", { type: "button", class: "link", onclick: () => renderLogin() }, "Entrar")),
+    footer: h(
+      "div",
+      { class: "gate-footer" },
+      legalLinks("Ao criar a conta, você concorda com os "),
+      h("p", { class: "small" }, "Já tem conta? ", h("button", { type: "button", class: "link", onclick: () => renderLogin() }, "Entrar")),
+    ),
     onSubmit: async (data, showError) => {
       if (data.get("password") !== data.get("confirm")) return showError("As senhas não são iguais.");
       try {
@@ -412,6 +429,7 @@ async function renderInvite(token) {
       ...passwordFields(),
     ],
     submitLabel: "Criar conta e entrar",
+    footer: legalLinks("Ao criar a conta, você concorda com os "),
     onSubmit: async (data, showError) => {
       if (data.get("password") !== data.get("confirm")) return showError("As senhas não são iguais.");
       try {
@@ -591,6 +609,7 @@ function renderShell() {
         h("button", { class: "quiet", type: "button", onclick: () => logout() }, "Sair"),
       ),
     ),
+    legalLinks(),
   );
 
   mount(h("div", { class: "shell" }, rail, h("main", { id: "main", tabindex: "-1" }), dialog, passwordDialog));
@@ -885,7 +904,13 @@ async function renderAutomations(main) {
                   ? [cfg.match === "exact" ? "Comentário igual a " : "Comentário com ", keywords.map((k) => h("span", { class: "chip" }, k))]
                   : "Qualquer comentário",
               ),
-              h("span", null, cfg.media_ids?.length ? `Só nos posts ${cfg.media_ids.join(", ")}` : "Em todos os posts"),
+              h(
+                "span",
+                cfg.media_ids?.length ? { title: cfg.media_ids.join(", ") } : null,
+                cfg.media_ids?.length
+                  ? `Só em ${cfg.media_ids.length} ${cfg.media_ids.length === 1 ? "post escolhido" : "posts escolhidos"}`
+                  : "Em todos os posts",
+              ),
             ),
             s.custom
               ? h("div", { class: "detail" }, "Fluxo personalizado", linkStatsLine(a.link_stats))
@@ -917,6 +942,195 @@ async function renderAutomations(main) {
     pageHead("Automações", "Quando alguém comenta num post, a automação responde no comentário e manda uma mensagem no direct."),
     list,
     automationForm(automations.length === 0),
+  );
+}
+
+// ---------------------------------------------------------------- seletor de posts
+
+const PRODUCT_LABEL = { REELS: "Reel", FEED: "Post", STORY: "Story", AD: "Anúncio" };
+
+function mediaThumb(m, cls) {
+  const src = safeHref(m.thumbnail_url);
+  return src
+    ? h("img", { class: cls, src, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })
+    : h("span", { class: `${cls} empty`, "aria-hidden": "true" }, PRODUCT_LABEL[m.product_type] ?? "Post");
+}
+
+/**
+ * Campo "em quais posts": todos ou só os escolhidos numa galeria das publicações da conta.
+ * O formulário lê os IDs do input escondido `media_ids` (separados por vírgula).
+ */
+function mediaPicker() {
+  const selected = new Map();
+  const hidden = h("input", { type: "hidden", name: "media_ids", value: "" });
+  const chips = h("div", { class: "media-selected" });
+  const chooseBtn = h("button", { type: "button", class: "secondary", onclick: () => openDialog() }, "Escolher posts");
+  const pickedArea = h("div", { class: "media-picked", hidden: true }, chips, chooseBtn);
+
+  const radio = (value, label, checked) =>
+    h(
+      "label",
+      { class: "check" },
+      h("input", {
+        type: "radio",
+        name: "media_scope",
+        value,
+        checked,
+        onchange: () => {
+          pickedArea.hidden = value === "all";
+          sync();
+          if (value === "some" && selected.size === 0) openDialog();
+        },
+      }),
+      label,
+    );
+
+  function sync() {
+    const some = !pickedArea.hidden;
+    hidden.value = some ? [...selected.keys()].join(",") : "";
+    chips.replaceChildren(
+      ...(selected.size
+        ? [...selected.values()].map((m) =>
+            h(
+              "span",
+              { class: "media-chip" },
+              mediaThumb(m, "media-chip-thumb"),
+              h("span", { class: "media-chip-text" }, m.caption ? m.caption.slice(0, 40) : `${PRODUCT_LABEL[m.product_type] ?? "Post"} ${m.id}`),
+              h(
+                "button",
+                {
+                  type: "button",
+                  class: "quiet",
+                  "aria-label": "Tirar este post",
+                  onclick: () => {
+                    selected.delete(m.id);
+                    sync();
+                  },
+                },
+                "×",
+              ),
+            ),
+          )
+        : [h("span", { class: "muted small" }, "Nenhum post escolhido ainda.")]),
+    );
+    chooseBtn.textContent = selected.size ? "Trocar posts" : "Escolher posts";
+  }
+
+  const dialog = h("dialog", { class: "media-dialog", "aria-label": "Escolher posts" });
+
+  async function openDialog() {
+    const draft = new Map(selected);
+    const grid = h("div", { class: "media-grid" });
+    const status = h("p", { class: "muted small" }, "Carregando posts…");
+    const more = h("button", { type: "button", class: "secondary", hidden: true }, "Carregar mais");
+    const counter = h("span", { class: "muted small" });
+    const confirm = h("button", { type: "button" }, "Usar estes posts");
+    const updateCounter = () => {
+      counter.textContent = draft.size === 1 ? "1 post escolhido" : `${draft.size} posts escolhidos`;
+      confirm.disabled = draft.size === 0;
+    };
+
+    let cursor = null;
+    async function load() {
+      more.disabled = true;
+      try {
+        const page = await api(acc(`/instagram/media${cursor ? `?after=${encodeURIComponent(cursor)}` : ""}`));
+        status.textContent = page.connection.sandbox
+          ? `Posts de exemplo da conta de teste @${page.connection.username}.`
+          : `Posts recentes de @${page.connection.username ?? "sua conta"}.`;
+        if (!page.items.length && !cursor) status.textContent = "Essa conta ainda não tem posts.";
+        for (const m of page.items) grid.append(card(m));
+        cursor = page.next;
+        more.hidden = !cursor;
+      } catch (err) {
+        status.textContent = err.message;
+        status.className = "error-text";
+      } finally {
+        more.disabled = false;
+      }
+    }
+
+    function card(m) {
+      const box = h("input", {
+        type: "checkbox",
+        checked: draft.has(m.id),
+        onchange: (e) => {
+          if (e.currentTarget.checked) draft.set(m.id, m);
+          else draft.delete(m.id);
+          updateCounter();
+        },
+      });
+      const when = m.timestamp ? new Date(m.timestamp).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) : null;
+      return h(
+        "label",
+        { class: "media-card" },
+        box,
+        mediaThumb(m, "media-thumb"),
+        h(
+          "span",
+          { class: "media-meta" },
+          h("span", { class: "pill" }, PRODUCT_LABEL[m.product_type] ?? "Post"),
+          when ? h("span", { class: "muted" }, when) : null,
+        ),
+        h("span", { class: "media-caption" }, m.caption || "Sem legenda"),
+      );
+    }
+
+    // Plano B: colar o ID de um post (ex.: anúncio ou post antigo que não aparece na lista).
+    const manual = h("input", { placeholder: "ID do post", inputmode: "numeric", "aria-label": "ID do post" });
+    const addManual = h(
+      "button",
+      {
+        type: "button",
+        class: "secondary",
+        onclick: () => {
+          const id = manual.value.trim();
+          if (!id) return;
+          draft.set(id, draft.get(id) ?? { id, caption: null, product_type: null, thumbnail_url: null });
+          manual.value = "";
+          updateCounter();
+          toast(`Post ${id} adicionado`);
+        },
+      },
+      "Adicionar",
+    );
+
+    more.addEventListener("click", load);
+    confirm.addEventListener("click", () => {
+      selected.clear();
+      for (const [id, m] of draft) selected.set(id, m);
+      sync();
+      dialog.close();
+    });
+
+    dialog.replaceChildren(
+      h("h2", null, "Em quais posts a automação vale?"),
+      status,
+      grid,
+      more,
+      h("details", { class: "media-manual" }, h("summary", null, "Colar o ID de um post"), h("div", { class: "copy-row" }, manual, addManual)),
+      h(
+        "div",
+        { class: "actions" },
+        confirm,
+        h("button", { type: "button", class: "secondary", onclick: () => dialog.close() }, "Cancelar"),
+        counter,
+      ),
+    );
+    updateCounter();
+    dialog.showModal();
+    await load();
+  }
+
+  sync();
+  return h(
+    "div",
+    { class: "media-field" },
+    h("span", { class: "field-label" }, "Em quais posts"),
+    h("div", { class: "media-scope" }, radio("all", "Todos os posts e reels", true), radio("some", "Só nos posts que eu escolher", false)),
+    pickedArea,
+    hidden,
+    dialog,
   );
 }
 
@@ -991,6 +1205,11 @@ function automationForm(open) {
           public_replies: list("public_replies", "\n"),
           dm: { text: str("dm_text") },
         };
+        // Lista vazia significa "todos os posts": não pode acontecer por engano.
+        if (d.get("media_scope") === "some" && !body.media_ids.length) {
+          errors.textContent = "Escolha pelo menos um post, ou marque “Todos os posts e reels”.";
+          return;
+        }
         if (!body.public_replies.length) delete body.public_replies;
         if (str("button_caption") || str("button_url")) {
           body.dm.buttons = [{ caption: str("button_caption"), url: str("button_url") }];
@@ -1039,13 +1258,7 @@ function automationForm(open) {
           ),
         ),
       ),
-      h(
-        "label",
-        null,
-        "Posts",
-        h("span", { class: "hint" }, "IDs separados por vírgula. Vazio = todos os posts."),
-        h("input", { name: "media_ids", placeholder: "17890000000000000" }),
-      ),
+      mediaPicker(),
     ),
     h(
       "fieldset",

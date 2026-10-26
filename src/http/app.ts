@@ -9,6 +9,7 @@ import { registerPanelRoutes } from "./panel.js";
 import { registerLinkRoutes } from "./links.js";
 import { registerAuthRoutes } from "./auth.js";
 import type { InstagramOAuth } from "../instagram/oauth.js";
+import type { InstagramApi } from "../instagram/client.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -17,7 +18,8 @@ declare module "fastify" {
   }
 }
 
-export type AppDeps = { config: Config; db: Db; oauth?: InstagramOAuth };
+/** `ig`: cliente da Graph API, para leituras feitas pelo painel (ex.: seletor de posts). */
+export type AppDeps = { config: Config; db: Db; oauth?: InstagramOAuth; ig?: InstagramApi };
 
 export function buildApp(deps: AppDeps, opts: FastifyServerOptions = {}): FastifyInstance {
   const app = Fastify({ bodyLimit: 1024 * 1024, trustProxy: deps.config.trustProxy, ...opts });

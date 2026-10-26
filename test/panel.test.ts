@@ -56,6 +56,21 @@ describe("painel estático", () => {
     }
     expect((await env.app.inject({ url: "/panel/../package.json" })).statusCode).toBe(404);
   });
+
+  it("publica a Política de Privacidade e os Termos sem login (a Meta exige a URL)", async () => {
+    for (const [url, title] of [
+      ["/privacidade", "Política de Privacidade"],
+      ["/termos", "Termos de Uso"],
+    ]) {
+      const res = await env.app.inject({ url });
+      expect(res.statusCode, url).toBe(200);
+      expect(res.headers["content-type"]).toContain("text/html");
+      expect(res.headers["content-security-policy"]).toContain("default-src 'self'");
+      expect(res.body).toContain(`<h1>${title}</h1>`);
+    }
+    // As páginas HTML não ficam expostas também em /panel/.
+    expect((await env.app.inject({ url: "/panel/legal/termos.html" })).statusCode).toBe(404);
+  });
 });
 
 describe("contas e automações", () => {

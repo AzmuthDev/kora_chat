@@ -3,7 +3,7 @@ import { loadConfig, type Config } from "../src/config.js";
 import type { Db } from "../src/db/index.js";
 import { createTestDb } from "./mysql-test-db.js";
 import { buildApp } from "../src/http/app.js";
-import { IgApiError, type IgComment, type IgMessage, type InstagramApi } from "../src/instagram/client.js";
+import { IgApiError, type IgComment, type IgMedia, type IgMessage, type InstagramApi } from "../src/instagram/client.js";
 import type { Recipient } from "../src/engine/policy.js";
 import { signMetaPayload } from "../src/instagram/signature.js";
 import type { WorkerDeps } from "../src/worker/process-event.js";
@@ -63,6 +63,18 @@ export class FakeInstagram implements InstagramApi {
   async listRecentMedia(args: { limit: number }) {
     this.reads.push("media");
     return this.media.slice(0, args.limit).map((id) => ({ id }));
+  }
+
+  /** Posts com detalhes para o seletor; o cursor é "cursor-<posição>". */
+  mediaDetails: IgMedia[] = [];
+
+  async listMedia(args: { limit: number; after?: string }) {
+    this.reads.push(`media-page:${args.after ?? ""}`);
+    const err = this.failListNext.shift();
+    if (err) throw err;
+    const start = args.after ? Number(args.after.replace("cursor-", "")) : 0;
+    const end = start + args.limit;
+    return { items: this.mediaDetails.slice(start, end), next: end < this.mediaDetails.length ? `cursor-${end}` : null };
   }
 
   /** Respostas do "segue a conta?" em ordem; vazio = segue. */
@@ -135,8 +147,8 @@ export async function setup(opts: { oauth?: boolean } = {}): Promise<TestEnv> {
   const testDb = await createTestDb();
   const db = testDb.db;
   const oauth = new FakeOAuth();
-  const app = buildApp({ config, db, oauth: opts.oauth === false ? undefined : oauth });
   const ig = new FakeInstagram();
+  const app = buildApp({ config, db, ig, oauth: opts.oauth === false ? undefined : oauth });
 
   const account = await app.inject({ method: "POST", url: "/api/accounts", headers: auth(), payload: { name: "Loja Teste" } });
   const accountId = account.json().id as string;

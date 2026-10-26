@@ -230,6 +230,10 @@ Vários workers podem rodar juntos sem renovar o mesmo token duas vezes.
 
 Se um **envio** (DM ou resposta pública) falhar com erro 190, a conexão também vira `expired` na hora e o fluxo para ali. Outros erros definitivos, como a janela de 24h, não derrubam a conexão.
 
+## Termos de Uso e Política de Privacidade
+
+As páginas públicas `/termos` e `/privacidade` (arquivos em `public/legal/`) são **rascunhos para revisão jurídica**. Os trechos com fundo amarelo (`<mark class="ph">`) precisam ser preenchidos com os dados da empresa: razão social, CNPJ, endereço, encarregado (DPO), prazos e provedores. Depois que o advogado aprovar, apague o aviso `legal-draft` do topo de cada página. A Meta pede a URL da política de privacidade nas configurações do app e no App Review.
+
 ## Desautorização e exclusão de dados (exigidos no App Review)
 
 No painel do app, em "Configurar login comercial do Instagram", preencha:
@@ -238,6 +242,8 @@ No painel do app, em "Configurar login comercial do Instagram", preencha:
 |---|---|
 | URL de retorno de chamada para cancelar autorização | `PUBLIC_BASE_URL/meta/instagram/deauthorize` |
 | URL de solicitação de exclusão de dados | `PUBLIC_BASE_URL/meta/instagram/data-deletion` |
+| URL da Política de Privacidade (Configurações básicas do app) | `PUBLIC_BASE_URL/privacidade` |
+| URL dos Termos de Serviço (Configurações básicas do app) | `PUBLIC_BASE_URL/termos` |
 
 Os dois recebem `signed_request` (HMAC-SHA256), validado com `IG_APP_SECRET` ou `META_APP_SECRET`. O `user_id` é comparado tanto com o ID da conta profissional quanto com o ID escopado do app (guardado no OAuth).
 

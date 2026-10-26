@@ -5,7 +5,10 @@ import { z } from "zod";
 import type { AppDeps } from "./app.js";
 import { commentTriggerConfigSchema, graphSchema, httpUrl } from "../engine/flow-types.js";
 import { buildCommentToDmGraph, createPublishedFlow } from "../store/automations.js";
-import { InstagramInUseError, upsertInstagramConnection } from "../store/connections.js";
+import { InstagramInUseError, setConnectionStatus, upsertInstagramConnection } from "../store/connections.js";
+import { decryptToken } from "../crypto/tokens.js";
+import { IgApiError } from "../instagram/client.js";
+import { sandboxInstagramApi } from "../instagram/sandbox.js";
 import { linkStatsByFlow } from "../store/links.js";
 import { accountRoleOf, createAccount } from "../store/team.js";
 import { registerTeamRoutes, requireAccountAdmin } from "./team.js";
@@ -166,6 +169,56 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
         [accountId],
       );
       return rows;
+    });
+
+    /** Posts recentes da conta do Instagram, para escolher em quais a automação vale. */
+    api.get("/api/accounts/:accountId/instagram/media", async (req, reply) => {
+      const { accountId } = uuid.parse(req.params);
+      const q = z
+        .object({ connection_id: z.string().uuid().optional(), after: z.string().max(500).optional() })
+        .parse(req.query);
+      // Sem conexão escolhida: a primeira do Instagram de verdade; se não houver, a de teste.
+      const conn = (
+        await deps.db.query<{ id: string; external_account_id: string; username: string | null; access_token_enc: string; sandbox: boolean }>(
+          `SELECT id, external_account_id, username, access_token_enc, sandbox FROM channel_connections
+            WHERE account_id = $1 AND channel = 'instagram' AND status = 'active' AND ($2 IS NULL OR id = $2)
+            ORDER BY sandbox, created_at
+            LIMIT 1`,
+          [accountId, q.connection_id ?? null],
+        )
+      ).rows[0];
+      if (!conn) return reply.code(404).send({ error: "Conecte uma conta do Instagram (ou crie uma conta de teste) para escolher posts." });
+
+      const ig = conn.sandbox ? sandboxInstagramApi : deps.ig;
+      if (!ig) return reply.code(503).send({ error: "Leitura do Instagram indisponível neste servidor." });
+      try {
+        const page = await ig.listMedia({
+          accessToken: decryptToken(conn.access_token_enc, deps.config.tokenEncryptionKey),
+          igAccountId: conn.external_account_id,
+          limit: 24,
+          after: q.after,
+        });
+        return {
+          connection: { id: conn.id, username: conn.username, sandbox: Boolean(conn.sandbox) },
+          items: page.items.map((m) => ({
+            id: m.id,
+            caption: m.caption,
+            media_type: m.mediaType,
+            product_type: m.productType,
+            thumbnail_url: m.thumbnailUrl,
+            permalink: m.permalink,
+            timestamp: m.timestamp,
+          })),
+          next: page.next,
+        };
+      } catch (err) {
+        if (err instanceof IgApiError && err.code === 190) {
+          await setConnectionStatus(deps.db, conn.id, "expired", err.message);
+          return reply.code(409).send({ error: "O acesso ao Instagram expirou: reconecte a conta em Conexões." });
+        }
+        if (err instanceof IgApiError) return reply.code(502).send({ error: `O Instagram não devolveu os posts: ${err.message}` });
+        throw err;
+      }
     });
 
     api.post("/api/accounts/:accountId/automations/comment-to-dm", async (req, reply) => {

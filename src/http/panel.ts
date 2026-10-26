@@ -13,6 +13,15 @@ const FILES: Record<string, string> = {
   "kora-wordmark.svg": "image/svg+xml",
   "kora-wordmark-white.svg": "image/svg+xml",
   "apple-touch-icon.png": "image/png",
+  "legal/privacidade.html": "text/html; charset=utf-8",
+  "legal/termos.html": "text/html; charset=utf-8",
+};
+
+/** Páginas públicas (sem login): a Meta exige a URL da política de privacidade no app. */
+const PAGES: Record<string, string> = {
+  "/": "index.html",
+  "/privacidade": "legal/privacidade.html",
+  "/termos": "legal/termos.html",
 };
 
 /** O painel só fala com a própria API; fontes vêm do Google Fonts. */
@@ -21,7 +30,8 @@ const CSP = [
   "script-src 'self'",
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
-  "img-src 'self' data:",
+  // Miniaturas dos posts no seletor vêm do CDN do Instagram/Facebook.
+  "img-src 'self' data: https://*.cdninstagram.com https://*.fbcdn.net",
   "connect-src 'self'",
   "frame-ancestors 'none'",
   "base-uri 'none'",
@@ -48,8 +58,8 @@ export function registerPanelRoutes(app: FastifyInstance): void {
       .type(FILES[file]!)
       .send(await load(file));
 
-  app.get("/", send("index.html"));
+  for (const [route, file] of Object.entries(PAGES)) app.get(route, send(file));
   for (const file of Object.keys(FILES)) {
-    if (file !== "index.html") app.get(`/panel/${file}`, send(file));
+    if (!file.endsWith(".html")) app.get(`/panel/${file}`, send(file));
   }
 }
