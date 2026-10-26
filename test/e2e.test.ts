@@ -86,7 +86,8 @@ describe("comentário → DM", () => {
             payload: {
               template_type: "button",
               text: "Oi maria! Aqui está:",
-              buttons: [{ type: "web_url", url: "https://loja.exemplo/oferta", title: "Abrir loja" }],
+              // O link passa pelo contador de cliques (/r/<slug>?r=<pessoa>), que redireciona para a oferta.
+              buttons: [{ type: "web_url", url: expect.stringMatching(/^https:\/\/clone\.exemplo\/r\/[\w-]+\?r=[\w-]{22}$/), title: "Abrir loja" }],
             },
           },
         },
@@ -195,7 +196,7 @@ describe("fluxo em duas etapas (quick reply abre a janela de 24h)", () => {
 });
 
 describe("falhas e reprocessamento", () => {
-  it("erro temporário na resposta pública: job reprocessado não reenvia a DM", async () => {
+  it("limite de taxa na resposta pública: job reprocessado não reenvia a DM", async () => {
     const graph = {
       start: "dm",
       nodes: {
@@ -209,7 +210,8 @@ describe("falhas e reprocessamento", () => {
       headers: auth(),
       payload: { name: "f", graph, trigger: { type: "comment", config: {} } },
     });
-    env.ig.failReplyNext.push(new IgApiError("Service unavailable", 503));
+    // Throttling é recusa explícita: a resposta não foi publicada, então vale tentar de novo.
+    env.ig.failReplyNext.push(new IgApiError("(#4) Application request limit reached", 400, 4));
 
     await postWebhook(env, commentWebhook({ commentId: "c800", text: "oi" }));
     expect(await drain(env.worker)).toEqual(["failed"]);
@@ -220,6 +222,40 @@ describe("falhas e reprocessamento", () => {
     expect(retry).toMatchObject({ status: "ran" });
 
     expect(env.ig.calls.map((c) => c.op)).toEqual(["sendMessage", "replyToComment"]);
+  });
+
+  it("5xx no envio: marca entrega incerta, não tenta de novo e não duplica a DM", async () => {
+    await createAutomation({ keywords: [], dm: { text: "Oi" } });
+    env.ig.failNext.push(new IgApiError("An unexpected error has occurred.", 500, 2));
+    await postWebhook(env, commentWebhook({ commentId: "c850", text: "oi" }));
+    const [outcome] = await drain(env.worker);
+    expect(outcome).toMatchObject({ status: "ran", result: { stoppedBy: "entrega incerta em dm" } });
+
+    const { rows } = await env.db.query<{ status: string }>("SELECT status FROM messages WHERE direction = 'outbound'");
+    expect(rows).toEqual([{ status: "unconfirmed" }]);
+    const jobs = await env.db.query<{ status: string }>("SELECT status FROM scheduled_jobs");
+    expect(jobs.rows).toEqual([{ status: "done" }]);
+
+    // Mesmo que o evento seja processado de novo, a DM incerta não é reenviada.
+    await env.db.query("UPDATE scheduled_jobs SET status = 'pending', run_at = NOW(3)");
+    await drain(env.worker);
+    expect(env.ig.calls).toEqual([]);
+  });
+
+  it("envio que ficou pela metade (processo caiu) não é repetido", async () => {
+    await createAutomation({ keywords: [], dm: { text: "Oi" } });
+    await postWebhook(env, commentWebhook({ commentId: "c860", text: "oi" }));
+    // Simula a queda entre gravar a intenção de envio e saber o resultado.
+    const job = await env.db.query<{ payload: string | { eventId: string } }>("SELECT payload FROM scheduled_jobs");
+    const payload = typeof job.rows[0]!.payload === "string" ? JSON.parse(job.rows[0]!.payload) : job.rows[0]!.payload;
+    await env.db.query(
+      `INSERT INTO messages (account_id, channel, direction, kind, payload, idempotency_key, status)
+       VALUES ($1, 'instagram', 'outbound', 'private_reply', '{}', $2, 'pending')`,
+      [env.accountId, `evt:${payload.eventId}:dm:0`],
+    );
+    const [outcome] = await drain(env.worker);
+    expect(outcome).toMatchObject({ status: "ran", result: { stoppedBy: "entrega incerta em dm" } });
+    expect(env.ig.calls).toEqual([]);
   });
 
   it("erro definitivo do Instagram marca a mensagem como falha e encerra o job", async () => {

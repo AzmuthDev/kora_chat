@@ -3,7 +3,7 @@ import { loadConfig, type Config } from "../src/config.js";
 import type { Db } from "../src/db/index.js";
 import { createTestDb } from "./mysql-test-db.js";
 import { buildApp } from "../src/http/app.js";
-import { IgApiError, type IgMessage, type InstagramApi } from "../src/instagram/client.js";
+import { IgApiError, type IgComment, type IgMessage, type InstagramApi } from "../src/instagram/client.js";
 import type { Recipient } from "../src/engine/policy.js";
 import { signMetaPayload } from "../src/instagram/signature.js";
 import type { WorkerDeps } from "../src/worker/process-event.js";
@@ -52,6 +52,33 @@ export class FakeInstagram implements InstagramApi {
     if (err) throw err;
     this.calls.push({ op: "replyToComment", ...args });
     return { id: `reply.${++this.seq}` };
+  }
+
+  /** Posts da conta, do mais novo ao mais antigo, e os comentários de cada um (para a varredura). */
+  media: string[] = [];
+  comments = new Map<string, IgComment[]>();
+  failListNext: IgApiError[] = [];
+  reads: string[] = [];
+
+  async listRecentMedia(args: { limit: number }) {
+    this.reads.push("media");
+    return this.media.slice(0, args.limit).map((id) => ({ id }));
+  }
+
+  /** Respostas do "segue a conta?" em ordem; vazio = segue. */
+  follows: (boolean | null)[] = [];
+
+  async getFollowStatus(_args: { accessToken: string; igsid: string }) {
+    this.reads.push("follow");
+    const answer = this.follows.shift();
+    return answer === undefined ? true : answer;
+  }
+
+  async listComments(args: { mediaId: string; limit: number }) {
+    this.reads.push(`comments:${args.mediaId}`);
+    const err = this.failListNext.shift();
+    if (err) throw err;
+    return (this.comments.get(args.mediaId) ?? []).slice(0, args.limit);
   }
 }
 
@@ -123,7 +150,7 @@ export async function setup(opts: { oauth?: boolean } = {}): Promise<TestEnv> {
 
   return {
     db, app, ig, oauth, config, accountId,
-    worker: { db, ig, tokenEncryptionKey: config.tokenEncryptionKey },
+    worker: { db, ig, tokenEncryptionKey: config.tokenEncryptionKey, publicBaseUrl: config.publicBaseUrl },
     close: async () => {
       await app.close();
       await testDb.drop();

@@ -143,15 +143,15 @@ describe("grafo da Quick Automation", () => {
     const g = buildCommentToDmGraph({ publicReplies: ["Te chamei no direct!"], dm: { text: "Aqui está" }, tag: "lead" });
     expect(graphSchema.parse(g)).toBeTruthy();
     expect(g.start).toBe("public_reply");
-    expect(g.nodes.public_reply!.next).toBe("dm");
-    expect(g.nodes.dm!.next).toBe("tag");
+    expect(g.nodes.public_reply).toMatchObject({ next: "dm" });
+    expect(g.nodes.dm).toMatchObject({ next: "tag" });
   });
 
   it("com abertura: o fluxo pausa no quick reply e a DM com link vem depois", () => {
     const g = buildCommentToDmGraph({ opening: { text: "Quer o link?", buttonCaption: "Quero!" }, dm: { text: "Link" } });
     expect(graphSchema.parse(g)).toBeTruthy();
     expect(g.start).toBe("opening");
-    expect(g.nodes.opening!.next).toBeNull();
+    expect(g.nodes.opening).toMatchObject({ next: null });
   });
 
   it("valida referências quebradas", () => {

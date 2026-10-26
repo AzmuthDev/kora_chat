@@ -144,7 +144,32 @@ worker (mesmo processo, ou vários) ◀── SELECT … FOR UPDATE SKIP LOCKED
 | `src/worker/` | Fila no MySQL (com `SKIP LOCKED`), processamento de eventos, loop do worker |
 | `src/store/` | Acesso a contatos, mensagens e criação de automações |
 
-**Garantias:** webhook repetido não reenvia nada (`events_raw.dedupe_key`); job reprocessado após falha temporária pula as mensagens já enviadas (`messages.idempotency_key`); erros 5xx, 429 e de throttling da Graph API têm retry com backoff; erros definitivos ficam registrados em `messages.error`. Os access tokens ficam cifrados com AES-256-GCM.
+**Garantias:** webhook repetido não reenvia nada (`events_raw.dedupe_key`); job reprocessado após falha temporária pula as mensagens já enviadas (`messages.idempotency_key`); recusas por limite de taxa (429 e os códigos de throttling) têm retry com backoff; erros definitivos ficam registrados em `messages.error`. Os access tokens ficam cifrados com AES-256-GCM.
+
+**Entrega incerta não se repete.** Uma resposta 5xx, uma falha de rede ou os erros 1 e 2 da Graph API não provam que a DM deixou de chegar: a Meta às vezes entrega e responde erro mesmo assim. Nesses casos a mensagem fica com status `unconfirmed` e o Kora **não** tenta de novo, para não mandar duas vezes. O mesmo vale para um envio que ficou `pending` porque o processo caiu no meio. O painel mostra "Entrega incerta: confira no Direct antes de mandar de novo".
+
+## Varredura de comentários
+
+Sem *Advanced Access*, a Meta não entrega o webhook de comentários em tempo real, e mesmo com ele alguns comentários nunca chegam ("ver mais", contas filtradas). Por isso, a cada `COMMENT_SWEEP_MINUTES` minutos (padrão 5, `0` desliga) o worker lê os comentários recentes dos posts que têm automação ativa e põe na fila os que casam com uma palavra-chave.
+
+- Usa a mesma chave do webhook (`comment:<id>`): o que já chegou pelo webhook, ou numa varredura anterior, não é processado de novo.
+- Pula comentários da própria conta, os que a conta já respondeu, os de antes da automação existir e os com mais de 72h.
+- Automação sem post definido olha os 10 posts mais recentes. Cada rodada põe no máximo 30 comentários por conta na fila, dos mais antigos para os mais novos.
+- Usa a permissão `instagram_business_manage_comments`, que o login já pede.
+
+## Links rastreados
+
+Com `PUBLIC_BASE_URL` definido, os botões de link da DM passam por `PUBLIC_BASE_URL/r/<slug>?r=<pessoa>`: o Kora conta o toque e redireciona para o destino. O `r` é um HMAC do contato, então dá para contar pessoas distintas sem expor quem é, e o IP é gravado só como HMAC. O painel mostra, em cada automação, quantas das pessoas que receberam o link tocaram nele.
+
+## Pedir para seguir antes do link
+
+Com `require_follow`, só quem segue a conta recebe o link. Quem não segue recebe um pedido para seguir com o botão "Já sigo". A Meta só informa se alguém segue a conta depois que a pessoa toca num botão, por isso essa opção sempre usa a mensagem de abertura (sem `opening`, entra uma abertura padrão). Como a Meta leva até cerca de um minuto para reconhecer um follow novo, um toque em "Já sigo" que ainda volte como "não segue" é conferido de novo depois de 20s e de 40s antes de repetir o pedido. Se a Meta não informar (`null`), o link é entregue, para nunca travar quem segue de verdade.
+
+```bash
+curl -X POST localhost:3000/api/accounts/$ACC/automations/comment-to-dm -H "Authorization: Bearer $ADMIN_TOKEN" -H "content-type: application/json" -d '{"keywords":["link"],"opening":{"text":"Quer o link?","button_caption":"Quero!"},"require_follow":{"text":"Siga a gente e toque em Já sigo 💙","button_caption":"Já sigo"},"dm":{"text":"Aqui está 👇","buttons":[{"caption":"Abrir","url":"https://minhaloja.com/oferta"}]}}'
+```
+
+A varredura, os links rastreados, o pedido para seguir e a regra de entrega incerta foram adaptados do [OpenReply](https://github.com/diwenne/openreply) (licença MIT). O código foi reescrito para este projeto.
 
 ## Fluxo em duas etapas (o padrão que o ManyChat usa)
 
@@ -241,7 +266,7 @@ Para isso, contatos e mensagens agora guardam de qual conexão vieram (`connecti
 - Gatilhos de DM por palavra-chave, menção e resposta em story, resposta padrão.
 - Smart Delay, coleta de input (`contact_sessions` já está no schema), condições, External Request, passo de IA.
 - Editor visual de fluxos livres (por exemplo React Flow); hoje o painel cria só o modelo comentário → DM.
-- Recuperação de senha por e-mail (hoje um administrador redefine).
+- Recuperação de senha por e-mail (hoje um administrador redefine na seção Equipe, ou `npm run reset-password -- email@exemplo.com` no servidor).
 - Registro de auditoria: quem criou ou alterou cada automação.
 - Lock por contato e rate limit por conta para volumes altos.
 - Busca do perfil (nome) do usuário: hoje `{{first_name}}` cai para o `username`.

@@ -12,4 +12,15 @@ export const sandboxInstagramApi: InstagramApi = {
   async replyToComment() {
     return { id: `sandbox.reply.${randomUUID()}` };
   },
+  // Conexões de teste não têm posts de verdade: a varredura não acha nada.
+  async listRecentMedia() {
+    return [];
+  },
+  async listComments() {
+    return [];
+  },
+  // No simulador não há como saber: trata como seguidor e entrega o link.
+  async getFollowStatus() {
+    return null;
+  },
 };

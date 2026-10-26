@@ -39,32 +39,44 @@ export type CommentToDmInput = {
   publicReplies?: string[];
   /** Mensagem de abertura com um botão de resposta rápida; o link só vai depois do toque (abre a janela de 24h). */
   opening?: { text: string; buttonCaption: string };
+  /** Só entrega o link para quem segue a conta; quem não segue recebe este pedido com o botão "Já sigo". */
+  requireFollow?: { text: string; buttonCaption: string };
   dm: { text: string; buttons?: { caption: string; url: string }[] };
   tag?: string;
 };
 
+/** A checagem de follow só funciona depois de um toque, então "pedir para seguir" exige uma abertura. */
+export const DEFAULT_OPENING = { text: "Oi! Quer que eu te mande o link?", buttonCaption: "Quero!" };
+
+const quickReplyMessage = (text: string, caption: string, target: string): FlowNode => ({
+  type: "send_message",
+  content: {
+    version: "v2",
+    content: { messages: [{ type: "text", text }], quick_replies: [{ type: "node", caption, target }] },
+  },
+  next: null,
+});
+
 /** Monta o grafo do "Quick Automation" comentário → DM. */
 export function buildCommentToDmGraph(input: CommentToDmInput): FlowGraph {
+  type Chainable = Exclude<FlowNode, { type: "check_follow" }>;
   const nodes: Record<string, FlowNode> = {};
   const order: string[] = [];
+  const opening = input.opening ?? (input.requireFollow ? DEFAULT_OPENING : undefined);
 
   if (input.publicReplies?.length) {
     nodes.public_reply = { type: "reply_comment", texts: input.publicReplies, next: null };
     order.push("public_reply");
   }
-  if (input.opening) {
-    nodes.opening = {
-      type: "send_message",
-      content: {
-        version: "v2",
-        content: {
-          messages: [{ type: "text", text: input.opening.text }],
-          quick_replies: [{ type: "node", caption: input.opening.buttonCaption, target: "dm" }],
-        },
-      },
-      next: null,
-    };
+  if (opening) {
+    nodes.opening = quickReplyMessage(opening.text, opening.buttonCaption, input.requireFollow ? "follow_gate" : "dm");
     order.push("opening");
+  }
+  if (input.requireFollow) {
+    // Toque na abertura → confere na hora. Toque em "Já sigo" → confere com paciência (a Meta demora a ver o follow).
+    nodes.follow_gate = { type: "check_follow", following: "dm", not_following: "follow_prompt" };
+    nodes.follow_prompt = quickReplyMessage(input.requireFollow.text, input.requireFollow.buttonCaption, "follow_recheck");
+    nodes.follow_recheck = { type: "check_follow", following: "dm", not_following: "follow_prompt", wait_for_follow: true };
   }
   nodes.dm = {
     type: "send_message",
@@ -82,10 +94,10 @@ export function buildCommentToDmGraph(input: CommentToDmInput): FlowGraph {
     },
     next: input.tag ? "tag" : null,
   };
-  if (!input.opening) order.push("dm");
+  if (!opening) order.push("dm");
   if (input.tag) nodes.tag = { type: "action", actions: [{ action: "add_tag", tag_name: input.tag }], next: null };
 
   // Encadeia a parte executada logo no comentário. Com abertura, "dm" só roda após o quick reply.
-  for (let i = 0; i < order.length - 1; i++) nodes[order[i]!]!.next = order[i + 1]!;
+  for (let i = 0; i < order.length - 1; i++) (nodes[order[i]!] as Chainable).next = order[i + 1]!;
   return { start: order[0]!, nodes };
 }

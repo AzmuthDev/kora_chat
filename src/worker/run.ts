@@ -1,9 +1,10 @@
 import { IgApiError } from "../instagram/client.js";
 import type { InstagramEvent } from "../instagram/normalize.js";
-import { claimNext, complete, fail, releaseStale, type Job } from "./queue.js";
+import { claimNext, complete, enqueue, fail, releaseStale, type Job } from "./queue.js";
 import { processDataDeletion, type DeletionSummary } from "./data-deletion.js";
 import { processInstagramEvent, type ProcessOutcome, type WorkerDeps } from "./process-event.js";
 import { refreshDueTokens, type TokenRefreshDeps } from "./token-refresh.js";
+import { sweepComments } from "./comment-sweep.js";
 
 type Logger = { info: (obj: object, msg?: string) => void; error: (obj: object, msg?: string) => void };
 
@@ -11,8 +12,14 @@ export type JobOutcome = ProcessOutcome | { status: "data_deleted"; summary: Del
 
 async function dispatch(deps: WorkerDeps, job: Job): Promise<JobOutcome> {
   if (job.kind === "process_event") {
-    const { eventId, event } = job.payload as { eventId: string; event: InstagramEvent };
-    return processInstagramEvent(deps, eventId, event);
+    const payload = job.payload as { eventId: string; event: InstagramEvent; followRechecks?: number };
+    const outcome = await processInstagramEvent(deps, payload.eventId, payload.event, { followRechecks: payload.followRechecks });
+    // Checagem de follow pediu mais tempo: reprocessa o mesmo evento depois (as chaves de idempotência não mudam).
+    if (outcome.status === "ran" && outcome.result.followRecheckAfterMs) {
+      const followRechecks = (payload.followRechecks ?? 0) + 1;
+      await enqueue(deps.db, "process_event", { ...payload, followRechecks }, new Date(Date.now() + outcome.result.followRecheckAfterMs));
+    }
+    return outcome;
   }
   if (job.kind === "data_deletion") {
     const { confirmationCode } = job.payload as { confirmationCode: string };
@@ -50,12 +57,14 @@ const TOKEN_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 export function startWorker(
   deps: WorkerDeps,
   log?: Logger,
-  opts: { pollMs?: number; tokenRefresh?: TokenRefreshDeps } = {},
+  opts: { pollMs?: number; tokenRefresh?: TokenRefreshDeps; commentSweepMs?: number } = {},
 ): { stop: () => Promise<void> } {
   const pollMs = opts.pollMs ?? 500;
   let stopped = false;
   let lastStaleCheck = 0;
   let lastTokenRefresh = 0;
+  // A primeira varredura espera um intervalo: o deploy não sai lendo a API logo ao subir.
+  let lastCommentSweep = Date.now();
   const loop = (async () => {
     while (!stopped) {
       try {
@@ -67,6 +76,13 @@ export function startWorker(
           lastTokenRefresh = Date.now();
           const outcomes = await refreshDueTokens(opts.tokenRefresh);
           if (outcomes.length) log?.info({ outcomes }, "renovação de tokens do Instagram");
+        }
+        if (opts.commentSweepMs && Date.now() - lastCommentSweep > opts.commentSweepMs) {
+          lastCommentSweep = Date.now();
+          const summaries = await sweepComments(deps);
+          // Só registra quando achou algo ou deu erro, senão o log vira ruído a cada 5 minutos.
+          const notable = summaries.filter((s) => s.queued > 0 || s.errors.length > 0);
+          if (notable.length) log?.info({ summaries: notable }, "varredura de comentários");
         }
         if ((await runOnce(deps, log)) === null) await new Promise((r) => setTimeout(r, pollMs));
       } catch (err) {

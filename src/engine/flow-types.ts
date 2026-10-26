@@ -56,6 +56,18 @@ export const nodeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("action"), actions: z.array(action).min(1).max(5), next }),
   /** Resposta pública no comentário que disparou o fluxo (uma das frases, sorteada). */
   z.object({ type: z.literal("reply_comment"), texts: z.array(z.string().min(1).max(300)).min(1), next }),
+  /**
+   * Confere se o contato segue a conta (is_user_follow_business) e desvia o fluxo.
+   * Só funciona depois de um toque do contato num botão: antes disso a Meta não informa.
+   * wait_for_follow: quando a pessoa diz que já segue, confere de novo algumas vezes antes de recusar,
+   * porque a Meta demora até ~1 min para reconhecer um follow novo.
+   */
+  z.object({
+    type: z.literal("check_follow"),
+    following: z.string().min(1),
+    not_following: z.string().min(1),
+    wait_for_follow: z.boolean().optional(),
+  }),
 ]);
 
 export const graphSchema = z
@@ -64,6 +76,12 @@ export const graphSchema = z
     const ids = new Set(Object.keys(g.nodes));
     if (!ids.has(g.start)) ctx.addIssue({ code: "custom", message: `start "${g.start}" não existe` });
     for (const [id, node] of Object.entries(g.nodes)) {
+      if (node.type === "check_follow") {
+        for (const target of [node.following, node.not_following]) {
+          if (!ids.has(target)) ctx.addIssue({ code: "custom", message: `${id}: checagem de follow aponta para nó inexistente` });
+        }
+        continue;
+      }
       if (node.next && !ids.has(node.next)) ctx.addIssue({ code: "custom", message: `${id}.next aponta para nó inexistente` });
       if (node.type === "send_message") {
         for (const qr of node.content.content.quick_replies ?? []) {

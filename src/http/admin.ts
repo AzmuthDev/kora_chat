@@ -6,6 +6,7 @@ import type { AppDeps } from "./app.js";
 import { commentTriggerConfigSchema, graphSchema, httpUrl } from "../engine/flow-types.js";
 import { buildCommentToDmGraph, createPublishedFlow } from "../store/automations.js";
 import { upsertInstagramConnection } from "../store/connections.js";
+import { linkStatsByFlow } from "../store/links.js";
 import { registerSimulatorRoutes } from "./simulator.js";
 import { registerUserRoutes } from "./users.js";
 import { isSameOrigin, resolvePrincipal } from "./auth.js";
@@ -18,6 +19,7 @@ const commentToDmBody = commentTriggerConfigSchema.extend({
   name: z.string().min(1).default("Comentário → DM"),
   public_replies: z.array(z.string().min(1).max(300)).optional(),
   opening: z.object({ text: z.string().min(1).max(1000), button_caption: z.string().min(1).max(20) }).optional(),
+  require_follow: z.object({ text: z.string().min(1).max(1000), button_caption: z.string().min(1).max(20) }).optional(),
   dm: z.object({
     text: z.string().min(1).max(1000),
     buttons: z.array(z.object({ caption: z.string().min(1).max(20), url: httpUrl })).max(3).optional(),
@@ -142,6 +144,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
       const graph = buildCommentToDmGraph({
         publicReplies: b.public_replies,
         opening: b.opening && { text: b.opening.text, buttonCaption: b.opening.button_caption },
+        requireFollow: b.require_follow && { text: b.require_follow.text, buttonCaption: b.require_follow.button_caption },
         dm: b.dm,
         tag: b.tag,
       });
@@ -182,7 +185,9 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AppDeps): void {
           ORDER BY f.created_at DESC`,
         [accountId],
       );
-      return rows;
+      const stats = await linkStatsByFlow(deps.db, accountId);
+      // null = a automação ainda não mandou nenhum link rastreado.
+      return rows.map((r) => ({ ...r, link_stats: stats.get(r.id as string) ?? null }));
     });
 
     /** Pausa ou reativa a automação (os gatilhos do fluxo). */

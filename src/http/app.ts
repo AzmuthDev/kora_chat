@@ -6,6 +6,7 @@ import { registerAdminRoutes } from "./admin.js";
 import { registerOAuthRoutes } from "./oauth.js";
 import { registerMetaCallbackRoutes } from "./meta-callbacks.js";
 import { registerPanelRoutes } from "./panel.js";
+import { registerLinkRoutes } from "./links.js";
 import { registerAuthRoutes } from "./auth.js";
 import type { InstagramOAuth } from "../instagram/oauth.js";
 
@@ -49,6 +50,7 @@ export function buildApp(deps: AppDeps, opts: FastifyServerOptions = {}): Fastif
   registerAdminRoutes(app, deps);
   registerOAuthRoutes(app, deps);
   registerMetaCallbackRoutes(app, deps);
+  registerLinkRoutes(app, deps);
   registerPanelRoutes(app);
   return app;
 }

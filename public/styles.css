@@ -973,7 +973,8 @@ dialog form .checklist {
   max-width: 90%;
 }
 
-.note.blocked {
+.note.blocked,
+.note.unconfirmed {
   background: var(--amber-soft);
   color: var(--amber-ink);
 }

@@ -10,7 +10,13 @@ import { recordInbound } from "../store/messages.js";
 import { sandboxInstagramApi } from "../instagram/sandbox.js";
 import { setConnectionStatus } from "../store/connections.js";
 
-export type WorkerDeps = { db: Db; ig: InstagramApi; tokenEncryptionKey: string };
+export type WorkerDeps = {
+  db: Db;
+  ig: InstagramApi;
+  tokenEncryptionKey: string;
+  /** PUBLIC_BASE_URL: liga o rastreio de cliques nos botões de link. */
+  publicBaseUrl?: string;
+};
 
 export type ProcessOutcome =
   | { status: "ignored"; reason: string }
@@ -19,8 +25,13 @@ export type ProcessOutcome =
 
 type Connection = { id: string; account_id: string; access_token_enc: string; sandbox: boolean };
 
-export async function processInstagramEvent(deps: WorkerDeps, eventId: string, event: InstagramEvent): Promise<ProcessOutcome> {
-  const outcome = await handleEvent(deps, eventId, event);
+export async function processInstagramEvent(
+  deps: WorkerDeps,
+  eventId: string,
+  event: InstagramEvent,
+  opts: { followRechecks?: number } = {},
+): Promise<ProcessOutcome> {
+  const outcome = await handleEvent(deps, eventId, event, opts.followRechecks);
   // Erro 190 num envio: o token foi revogado/expirou. Para de usar a conexão até reconectar.
   if (outcome.status === "ran" && outcome.result.tokenInvalid) {
     await setConnectionStatus(deps.db, outcome.connectionId, "expired", outcome.result.tokenInvalid);
@@ -28,7 +39,7 @@ export async function processInstagramEvent(deps: WorkerDeps, eventId: string, e
   return outcome;
 }
 
-async function handleEvent(deps: WorkerDeps, eventId: string, event: InstagramEvent): Promise<ProcessOutcome> {
+async function handleEvent(deps: WorkerDeps, eventId: string, event: InstagramEvent, followRechecks?: number): Promise<ProcessOutcome> {
   const conn = (
     await deps.db.query<Connection>(
       `SELECT id, account_id, access_token_enc, sandbox FROM channel_connections
@@ -41,13 +52,18 @@ async function handleEvent(deps: WorkerDeps, eventId: string, event: InstagramEv
   const accountId = conn.account_id;
   const connectionId = conn.id;
   // Conexões de teste (simulador) nunca chamam o Instagram de verdade.
-  const flowDeps = { db: deps.db, ig: conn.sandbox ? sandboxInstagramApi : deps.ig };
+  const flowDeps = {
+    db: deps.db,
+    ig: conn.sandbox ? sandboxInstagramApi : deps.ig,
+    links: deps.publicBaseUrl ? { baseUrl: deps.publicBaseUrl, secret: deps.tokenEncryptionKey } : undefined,
+  };
   const base = {
     accountId,
     connectionId,
     igAccountId: event.igAccountId,
     accessToken: decryptToken(conn.access_token_enc, deps.tokenEncryptionKey),
     idempotencyBase: `evt:${eventId}`,
+    followRechecks,
   };
 
   if (event.type === "comment") {

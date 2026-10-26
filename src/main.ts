@@ -31,13 +31,14 @@ app.log.info(oauth ? `OAuth do Instagram ativo (redirect: ${config.igOAuth!.redi
 const ig = createInstagramApi({ baseUrl: config.igGraphBaseUrl, version: config.igGraphVersion });
 const worker =
   config.workerMode === "inline"
-    ? startWorker({ db, ig, tokenEncryptionKey: config.tokenEncryptionKey }, app.log, {
+    ? startWorker({ db, ig, tokenEncryptionKey: config.tokenEncryptionKey, publicBaseUrl: config.publicBaseUrl }, app.log, {
         tokenRefresh: {
           db,
           oauth: { refresh: (token) => refreshLongLivedToken(config.igGraphBaseUrl, token) },
           tokenEncryptionKey: config.tokenEncryptionKey,
           refreshDaysBefore: config.tokenRefreshDaysBefore,
         },
+        commentSweepMs: config.commentSweepMinutes * 60 * 1000,
       })
     : null;
 

@@ -32,6 +32,8 @@ const schema = z.object({
   TRUST_PROXY: z.enum(["true", "false"]).default("false"),
   /** inline = worker roda no mesmo processo do servidor HTTP. */
   WORKER_MODE: z.enum(["inline", "off"]).default("inline"),
+  /** De quantos em quantos minutos o worker procura comentários que o webhook não entregou. 0 desliga. */
+  COMMENT_SWEEP_MINUTES: z.coerce.number().int().min(0).max(1440).default(5),
 });
 
 export type Config = {
@@ -57,6 +59,7 @@ export type Config = {
   tokenRefreshDaysBefore: number;
   trustProxy: boolean;
   workerMode: "inline" | "off";
+  commentSweepMinutes: number;
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -93,5 +96,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     tokenRefreshDaysBefore: e.IG_TOKEN_REFRESH_DAYS_BEFORE,
     trustProxy: e.TRUST_PROXY === "true",
     workerMode: e.WORKER_MODE,
+    commentSweepMinutes: e.COMMENT_SWEEP_MINUTES,
   };
 }

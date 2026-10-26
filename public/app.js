@@ -659,6 +659,7 @@ function summarizeGraph(graph) {
     dm: text(nodes.dm),
     buttons: nodes.dm?.content?.content?.messages?.[0]?.buttons ?? [],
     tag: nodes.tag?.actions?.find((a) => a.action === "add_tag")?.tag_name,
+    followPrompt: text(nodes.follow_prompt),
     custom: !nodes.dm,
   };
 }
@@ -709,7 +710,7 @@ async function renderAutomations(main) {
               h("span", null, cfg.media_ids?.length ? `Só nos posts ${cfg.media_ids.join(", ")}` : "Em todos os posts"),
             ),
             s.custom
-              ? h("div", { class: "detail" }, "Fluxo personalizado")
+              ? h("div", { class: "detail" }, "Fluxo personalizado", linkStatsLine(a.link_stats))
               : h(
                   "div",
                   { class: "detail" },
@@ -717,9 +718,11 @@ async function renderAutomations(main) {
                   s.opening
                     ? h("span", null, "Pergunta no direct: ", h("strong", null, s.opening), ` [${s.openingButton}]`)
                     : null,
+                  s.followPrompt ? h("span", null, "Só manda o link para quem segue. Para os outros: ", h("strong", null, s.followPrompt)) : null,
                   h("span", null, s.opening ? "Depois do toque, manda: " : "Manda no direct: ", h("strong", null, s.dm)),
                   s.buttons.length ? h("span", null, "Botões: ", s.buttons.map((b) => h("span", { class: "chip" }, b.caption))) : null,
                   s.tag ? h("span", null, "Marca o contato com ", h("span", { class: "chip" }, s.tag)) : null,
+                  linkStatsLine(a.link_stats),
                 ),
             h("label", { class: "switch" }, toggle, stateText),
           );
@@ -739,6 +742,21 @@ async function renderAutomations(main) {
   );
 }
 
+/** Cliques no botão de link: quantas das pessoas que receberam tocaram nele. */
+function linkStatsLine(stats) {
+  if (!stats) return null;
+  const { recipients, people_clicked, clicks } = stats;
+  if (!recipients) return h("span", null, "Cliques no link: ninguém recebeu ainda");
+  const rate = Math.round((people_clicked / recipients) * 100);
+  return h(
+    "span",
+    null,
+    "Cliques no link: ",
+    h("strong", null, `${people_clicked} de ${recipients} ${recipients === 1 ? "pessoa" : "pessoas"} (${rate}%)`),
+    `, ${clicks} ${clicks === 1 ? "toque" : "toques"} no total`,
+  );
+}
+
 function automationForm(open) {
   const errors = h("p", { class: "form-errors", role: "alert" });
   const openingFields = h(
@@ -750,7 +768,31 @@ function automationForm(open) {
   const askFirst = h("input", {
     type: "checkbox",
     name: "ask_first",
-    onchange: (e) => (openingFields.hidden = !e.currentTarget.checked),
+    onchange: (e) => {
+      openingFields.hidden = !e.currentTarget.checked;
+      // A checagem de follow só funciona depois que a pessoa toca num botão.
+      if (!e.currentTarget.checked) {
+        requireFollow.checked = false;
+        followFields.hidden = true;
+      }
+    },
+  });
+  const followFields = h(
+    "div",
+    { class: "grid-2", hidden: true },
+    h("label", null, "Pedido para seguir", h("textarea", { name: "follow_text", rows: 2, value: "Para receber o link, siga a gente e toque em “Já sigo” 💙" })),
+    h("label", null, "Texto do botão", h("input", { name: "follow_button", maxlength: 20, value: "Já sigo" })),
+  );
+  const requireFollow = h("input", {
+    type: "checkbox",
+    name: "require_follow",
+    onchange: (e) => {
+      followFields.hidden = !e.currentTarget.checked;
+      if (e.currentTarget.checked) {
+        askFirst.checked = true;
+        openingFields.hidden = false;
+      }
+    },
   });
 
   const form = h(
@@ -776,6 +818,7 @@ function automationForm(open) {
           body.dm.buttons = [{ caption: str("button_caption"), url: str("button_url") }];
         }
         if (askFirst.checked) body.opening = { text: str("opening_text"), button_caption: str("opening_button") };
+        if (requireFollow.checked) body.require_follow = { text: str("follow_text"), button_caption: str("follow_button") };
         if (str("tag")) body.tag = str("tag");
 
         await withBusy(e.submitter, async () => {
@@ -849,6 +892,13 @@ function automationForm(open) {
         "O Instagram só deixa mandar uma mensagem para quem comentou. Com a pergunta, o link vai depois que a pessoa toca no botão, e a conversa fica aberta por 24h.",
       ),
       openingFields,
+      h("label", { class: "check" }, requireFollow, "Só mandar o link para quem segue a conta"),
+      h(
+        "p",
+        { class: "muted small" },
+        "Quem não segue recebe o pedido para seguir e um botão para tocar depois. O Instagram leva até um minuto para reconhecer um follow novo, então o Kora confere de novo antes de recusar.",
+      ),
+      followFields,
       h("label", null, "Mensagem", h("textarea", { name: "dm_text", required: true, rows: 3, placeholder: "Oi {{first_name}}! Aqui está o link da promoção:" })),
       h(
         "div",
@@ -1045,18 +1095,24 @@ async function renderSimulator(main) {
         { class: "body" },
         h("span", { class: "who" }, `@${username ?? "?"}`),
         text,
-        h("span", { class: "when" }, status === "failed" ? "Falhou ao responder" : ago(when)),
+        h(
+          "span",
+          { class: "when" },
+          status === "failed" ? "Falhou ao responder" : status === "unconfirmed" ? "Resposta incerta" : ago(when),
+        ),
       ),
     );
   }
 
   function dmItem(m, quickRepliesActive) {
-    if (m.status === "blocked" || m.status === "failed") {
-      return h(
-        "p",
-        { class: `note ${m.status}` },
-        m.status === "blocked" ? `Não enviada: ${m.error ?? "fora da janela de 24h"}` : `Falhou: ${m.error ?? "erro do Instagram"}`,
-      );
+    if (m.status === "blocked" || m.status === "failed" || m.status === "unconfirmed") {
+      const text = {
+        blocked: `Não enviada: ${m.error ?? "fora da janela de 24h"}`,
+        failed: `Falhou: ${m.error ?? "erro do Instagram"}`,
+        // O Instagram respondeu com erro, mas a DM pode ter chegado: o Kora não reenvia para não duplicar.
+        unconfirmed: "Entrega incerta: confira no Direct antes de mandar de novo.",
+      }[m.status];
+      return h("p", { class: `note ${m.status}` }, text);
     }
     const p = m.payload ?? {};
     if (m.direction === "inbound") {

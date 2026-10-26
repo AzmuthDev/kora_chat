@@ -47,12 +47,12 @@ export async function beginOutbound(
 export async function finishOutbound(
   q: Queryable,
   key: string,
-  result: { status: "sent"; externalId?: string } | { status: "failed"; error: string },
+  result: { status: "sent"; externalId?: string } | { status: "failed" | "unconfirmed"; error: string },
 ): Promise<void> {
   await q.query("UPDATE messages SET status = $2, external_message_id = $3, error = $4 WHERE idempotency_key = $1", [
     key,
     result.status,
     result.status === "sent" ? (result.externalId ?? null) : null,
-    result.status === "failed" ? result.error : null,
+    result.status === "sent" ? null : result.error,
   ]);
 }
